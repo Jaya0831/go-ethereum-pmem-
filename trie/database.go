@@ -57,6 +57,17 @@ var (
 	memcacheCommitTimeTimer  = metrics.NewRegisteredResettingTimer("trie/memcache/commit/time", nil)
 	memcacheCommitNodesMeter = metrics.NewRegisteredMeter("trie/memcache/commit/nodes", nil)
 	memcacheCommitSizeMeter  = metrics.NewRegisteredMeter("trie/memcache/commit/size", nil)
+
+	// // pmemCache metrics
+	// memcachePmemHitMeter   = metrics.NewRegisteredMeter("trie/memcache/pmem/hit", nil)
+	// memcachePmemMissMeter  = metrics.NewRegisteredMeter("trie/memcache/pmem/miss", nil)
+	// memcachePmemReadMeter  = metrics.NewRegisteredMeter("trie/memcache/pmem/read", nil)
+	// memcachePmemWriteMeter = metrics.NewRegisteredMeter("trie/memcache/pmem/write", nil)
+	// // for pmemCache test
+	// memcachePmemErrorMeter1 = metrics.NewRegisteredMeter("trie/memcache/pmem/error1", nil)
+	// memcachePmemErrorMeter2 = metrics.NewRegisteredMeter("trie/memcache/pmem/error2", nil)
+	// memcachePmemGetMeter    = metrics.NewRegisteredMeter("trie/memcache/pmem/get", nil)
+	memcacheTestPmemMeter = metrics.NewRegisteredMeter("trie/memcache/test/pmem", nil)
 )
 
 // Database is an intermediate write layer between the trie data structures and
@@ -69,6 +80,9 @@ var (
 // servers even while the trie is executing expensive garbage collection.
 type Database struct {
 	diskdb ethdb.Database // Persistent storage for matured trie nodes
+
+	//TODO: double-check
+	// pmemCache *pmem_cache.PmemCache // PmemCache
 
 	cleans  *fastcache.Cache            // GC friendly memory cache of clean node RLPs
 	dirties map[common.Hash]*cachedNode // Data and references relationships of dirty trie nodes
@@ -293,8 +307,13 @@ func NewDatabaseWithConfig(diskdb ethdb.Database, config *Config) *Database {
 	if config != nil && config.Preimages {
 		preimage = newPreimageStore(diskdb)
 	}
+	// // create a new pmem cache
+	// // TODO: config
+	// pcache := pmem_cache.NewPmemcache()
+
 	db := &Database{
 		diskdb: diskdb,
+		// pmemCache: pcache,
 		cleans: cleans,
 		dirties: map[common.Hash]*cachedNode{{}: {
 			children: make(map[common.Hash]uint16),
@@ -339,6 +358,7 @@ func (db *Database) insert(hash common.Hash, size int, node node) {
 // node retrieves a cached trie node from memory, or returns nil if none can be
 // found in the memory cache.
 func (db *Database) node(hash common.Hash) node {
+	// fmt.Printf("type of db.diskdb in func node: %T\n", db.diskdb)
 	// Retrieve the node from the clean cache if available
 	if db.cleans != nil {
 		if enc := db.cleans.Get(nil, hash[:]); enc != nil {
@@ -362,11 +382,29 @@ func (db *Database) node(hash common.Hash) node {
 	}
 	memcacheDirtyMissMeter.Mark(1)
 
+	// enc_p := db.pmemCache.Get(hash[:])
+	// memcachePmemGetMeter.Mark(1)
 	// Content unavailable in memory, attempt to retrieve from disk
-	enc, err := db.diskdb.Get(hash[:])
-	if err != nil || enc == nil {
+	// enc, err := db.diskdb.Get(hash[:])
+	// if _, ok := (db.diskdb).(*rawdb.Nofreezedb); ok {
+	// 	memcacheTestPmemMeter.Mark(1)
+	// }
+	enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+	// if err != nil || enc == nil {
+	if enc == nil {
 		return nil
 	}
+	// if enc_p == nil {
+	// 	db.pmemCache.Put(hash[:], enc)
+	// 	memcachePmemMissMeter.Mark(1)
+	// 	memcachePmemWriteMeter.Mark(int64(len(enc)))
+	// } else {
+	// 	memcachePmemReadMeter.Mark(int64(len(enc)))
+	// 	memcachePmemHitMeter.Mark(1)
+	// 	if !bytes.Equal(enc, enc_p) {
+	// 		memcachePmemErrorMeter1.Mark(1)
+	// 	}
+	// }
 	if db.cleans != nil {
 		db.cleans.Set(hash[:], enc)
 		memcacheCleanMissMeter.Mark(1)
@@ -380,6 +418,7 @@ func (db *Database) node(hash common.Hash) node {
 // Node retrieves an encoded cached trie node from memory. If it cannot be found
 // cached, the method queries the persistent database for the content.
 func (db *Database) Node(hash common.Hash) ([]byte, error) {
+	// fmt.Printf("type of db.diskdb in func Node: %T\n", db.diskdb)
 	// It doesn't make sense to retrieve the metaroot
 	if hash == (common.Hash{}) {
 		return nil, errors.New("not found")
@@ -404,9 +443,37 @@ func (db *Database) Node(hash common.Hash) ([]byte, error) {
 	}
 	memcacheDirtyMissMeter.Mark(1)
 
+	// Content unavailable in memory, fist check the pmem cache
+	// enc := db.pmemCache.Get(hash[:])
+	// if enc == nil {
+	// 	enc = rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+
+	// 	memcachePmemMissMeter.Mark(1)
+	// } else {
+	// 	memcachePmemHitMeter.Mark(1)
+	// 	memcachePmemReadMeter.Mark(int64(len(enc)))
+	// }
+
+	// for pmemCache test
+	// enc_p := db.pmemCache.Get(hash[:])
+	// memcachePmemGetMeter.Mark(1)
+	// if _, ok := (db.diskdb).(*rawdb.Nofreezedb); ok {
+	// 	memcacheTestPmemMeter.Mark(1)
+	// }
 	// Content unavailable in memory, attempt to retrieve from disk
 	enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 	if len(enc) != 0 {
+		// if enc_p == nil {
+		// 	db.pmemCache.Put(hash[:], enc)
+		// 	memcachePmemMissMeter.Mark(1)
+		// 	memcachePmemWriteMeter.Mark(int64(len(enc)))
+		// } else {
+		// 	memcachePmemReadMeter.Mark(int64(len(enc)))
+		// 	memcachePmemHitMeter.Mark(1)
+		// 	if !bytes.Equal(enc, enc_p) {
+		// 		memcachePmemErrorMeter2.Mark(1)
+		// 	}
+		// }
 		if db.cleans != nil {
 			db.cleans.Set(hash[:], enc)
 			memcacheCleanMissMeter.Mark(1)
@@ -572,6 +639,9 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		// Fetch the oldest referenced node and push into the batch
 		node := db.dirties[oldest]
 		rawdb.WriteLegacyTrieNode(batch, oldest, node.rlp())
+		// // Also write back to pmemcache
+		// db.pmemCache.Put(oldest[:], node.rlp())
+		// memcachePmemWriteMeter.Mark(int64(len(node.rlp())))
 
 		// If we exceeded the ideal batch size, commit and reset
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
@@ -703,6 +773,7 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 		return err
 	}
 	// If we've reached an optimal batch size, commit and start over
+	// enc := node.rlp()
 	rawdb.WriteLegacyTrieNode(batch, hash, node.rlp())
 	if batch.ValueSize() >= ethdb.IdealBatchSize {
 		if err := batch.Write(); err != nil {
@@ -716,6 +787,10 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 			return err
 		}
 	}
+	// // Also write back to pmemcache
+	// db.pmemCache.Put(hash[:], enc)
+	// memcachePmemMissMeter.Mark(1)
+	// memcachePmemWriteMeter.Mark(int64(len(enc)))
 	return nil
 }
 

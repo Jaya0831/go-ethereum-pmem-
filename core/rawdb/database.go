@@ -31,13 +31,22 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/olekukonko/tablewriter"
+)
+
+var (
+	enterNDBWFMeter    = metrics.NewRegisteredMeter("core/rawdb/database/Test/NewDatabaseWithFreezer", nil)
+	enterNDBMeter      = metrics.NewRegisteredMeter("core/rawdb/database/Test/NewDatabase", nil)
+	enterNLevelDBMeter = metrics.NewRegisteredMeter("core/rawdb/database/Test/NewLevelDBDatabase", nil)
+	enteroKVDBMeter    = metrics.NewRegisteredMeter("core/rawdb/database/Test/openKeyValueDatabase", nil)
+	enteroOpenMeter    = metrics.NewRegisteredMeter("core/rawdb/database/Test/Open", nil)
 )
 
 // freezerdb is a database wrapper that enabled freezer data retrievals.
 type freezerdb struct {
 	ancientRoot string
-	ethdb.KeyValueStore
+	ethdb.KeyValueStoreWithPmem
 	ethdb.AncientStore
 }
 
@@ -53,7 +62,7 @@ func (frdb *freezerdb) Close() error {
 	if err := frdb.AncientStore.Close(); err != nil {
 		errs = append(errs, err)
 	}
-	if err := frdb.KeyValueStore.Close(); err != nil {
+	if err := frdb.KeyValueStoreWithPmem.Close(); err != nil {
 		errs = append(errs, err)
 	}
 	if len(errs) != 0 {
@@ -84,7 +93,7 @@ func (frdb *freezerdb) Freeze(threshold uint64) error {
 
 // nofreezedb is a database wrapper that disables freezer data retrievals.
 type nofreezedb struct {
-	ethdb.KeyValueStore
+	ethdb.KeyValueStoreWithPmem
 }
 
 // HasAncient returns an error as we don't have a backing chain freezer.
@@ -166,8 +175,9 @@ func (db *nofreezedb) AncientDatadir() (string, error) {
 
 // NewDatabase creates a high level database on top of a given key-value data
 // store without a freezer moving immutable chain segments into cold storage.
-func NewDatabase(db ethdb.KeyValueStore) ethdb.Database {
-	return &nofreezedb{KeyValueStore: db}
+func NewDatabase(db ethdb.KeyValueStoreWithPmem) ethdb.Database {
+	enterNDBMeter.Mark(1)
+	return &nofreezedb{KeyValueStoreWithPmem: db}
 }
 
 // resolveChainFreezerDir is a helper function which resolves the absolute path
@@ -197,7 +207,8 @@ func resolveChainFreezerDir(ancient string) string {
 // value data store with a freezer moving immutable chain segments into cold
 // storage. The passed ancient indicates the path of root ancient directory
 // where the chain freezer can be opened.
-func NewDatabaseWithFreezer(db ethdb.KeyValueStore, ancient string, namespace string, readonly bool) (ethdb.Database, error) {
+func NewDatabaseWithFreezer(db ethdb.KeyValueStoreWithPmem, ancient string, namespace string, readonly bool) (ethdb.Database, error) {
+	enterNDBWFMeter.Mark(1)
 	// Create the idle freezer instance
 	frdb, err := newChainFreezer(resolveChainFreezerDir(ancient), namespace, readonly)
 	if err != nil {
@@ -291,9 +302,9 @@ func NewDatabaseWithFreezer(db ethdb.KeyValueStore, ancient string, namespace st
 		}()
 	}
 	return &freezerdb{
-		ancientRoot:   ancient,
-		KeyValueStore: db,
-		AncientStore:  frdb,
+		ancientRoot:           ancient,
+		KeyValueStoreWithPmem: db,
+		AncientStore:          frdb,
 	}, nil
 }
 
@@ -313,6 +324,7 @@ func NewMemoryDatabaseWithCap(size int) ethdb.Database {
 // NewLevelDBDatabase creates a persistent key-value database without a freezer
 // moving immutable chain segments into cold storage.
 func NewLevelDBDatabase(file string, cache int, handles int, namespace string, readonly bool) (ethdb.Database, error) {
+	enterNLevelDBMeter.Mark(1)
 	db, err := leveldb.New(file, cache, handles, namespace, readonly)
 	if err != nil {
 		return nil, err
@@ -361,6 +373,7 @@ type OpenOptions struct {
 //	db is non-existent |  leveldb default  |  specified type
 //	db is existent     |  from db          |  specified type (if compatible)
 func openKeyValueDatabase(o OpenOptions) (ethdb.Database, error) {
+	enteroKVDBMeter.Mark(1)
 	existingDb := hasPreexistingDb(o.Directory)
 	if len(existingDb) != 0 && len(o.Type) != 0 && o.Type != existingDb {
 		return nil, fmt.Errorf("db.engine choice was %v but found pre-existing %v database in specified data directory", o.Type, existingDb)
@@ -387,6 +400,7 @@ func openKeyValueDatabase(o OpenOptions) (ethdb.Database, error) {
 // The passed o.AncientDir indicates the path of root ancient directory where
 // the chain freezer can be opened.
 func Open(o OpenOptions) (ethdb.Database, error) {
+	enteroOpenMeter.Mark(1)
 	kvdb, err := openKeyValueDatabase(o)
 	if err != nil {
 		return nil, err

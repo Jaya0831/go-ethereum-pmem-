@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/pmem_cache"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -62,6 +63,8 @@ const (
 type Database struct {
 	fn string      // filename for reporting
 	db *leveldb.DB // LevelDB instance
+	// pmemCache
+	pmemCache *pmem_cache.PmemCache
 
 	compTimeMeter       metrics.Meter // Meter for measuring the total time spent in database compaction
 	compReadMeter       metrics.Meter // Meter for measuring the data read during compaction
@@ -83,10 +86,18 @@ type Database struct {
 	log log.Logger // Contextual logger tracking the database path
 }
 
+var (
+	enterLeveldbNewMeter        = metrics.NewRegisteredMeter("core/rawdb/database/Test/Leveldb_New", nil)
+	enterLeveldbNew2Meter       = metrics.NewRegisteredMeter("core/rawdb/database/Test/Leveldb_New2", nil)
+	enterLeveldbNewCustomMeter  = metrics.NewRegisteredMeter("core/rawdb/database/Test/Leveldb_NewCustom", nil)
+	enterLeveldbNewCustom2Meter = metrics.NewRegisteredMeter("core/rawdb/database/Test/Leveldb_NewCustom2", nil)
+)
+
 // New returns a wrapped LevelDB object. The namespace is the prefix that the
 // metrics reporting should use for surfacing internal stats.
 func New(file string, cache int, handles int, namespace string, readonly bool) (*Database, error) {
-	return NewCustom(file, namespace, func(options *opt.Options) {
+	enterLeveldbNewMeter.Mark(1)
+	leveldb, err := NewCustom(file, namespace, func(options *opt.Options) {
 		// Ensure we have some minimal caching and file guarantees
 		if cache < minCache {
 			cache = minCache
@@ -102,12 +113,19 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 			options.ReadOnly = true
 		}
 	})
+	var r interface{}
+	r = leveldb
+	if _, ok := r.(ethdb.KeyValueWriterReaderWithPmem); ok {
+		enterLeveldbNew2Meter.Mark(1)
+	}
+	return leveldb, err
 }
 
 // NewCustom returns a wrapped LevelDB object. The namespace is the prefix that the
 // metrics reporting should use for surfacing internal stats.
 // The customize function allows the caller to modify the leveldb options.
 func NewCustom(file string, namespace string, customize func(options *opt.Options)) (*Database, error) {
+	enterLeveldbNewCustomMeter.Mark(1)
 	options := configureOptions(customize)
 	logger := log.New("database", file)
 	usedCache := options.GetBlockCacheCapacity() + options.GetWriteBuffer()*2
@@ -125,12 +143,15 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	if err != nil {
 		return nil, err
 	}
+	//TODO: 用config信息定制初始化
+	pcache := pmem_cache.NewPmemcache()
 	// Assemble the wrapper with all the registered metrics
 	ldb := &Database{
-		fn:       file,
-		db:       db,
-		log:      logger,
-		quitChan: make(chan chan error),
+		fn:        file,
+		db:        db,
+		pmemCache: pcache,
+		log:       logger,
+		quitChan:  make(chan chan error),
 	}
 	ldb.compTimeMeter = metrics.NewRegisteredMeter(namespace+"compact/time", nil)
 	ldb.compReadMeter = metrics.NewRegisteredMeter(namespace+"compact/input", nil)
@@ -146,6 +167,11 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	ldb.seekCompGauge = metrics.NewRegisteredGauge(namespace+"compact/seek", nil)
 	ldb.manualMemAllocGauge = metrics.NewRegisteredGauge(namespace+"memory/manualalloc", nil)
 
+	var r interface{}
+	r = ldb
+	if _, ok := r.(ethdb.KeyValueWriterReaderWithPmem); ok {
+		enterLeveldbNewCustom2Meter.Mark(1)
+	}
 	// Start up the metrics gathering and return
 	go ldb.meter(metricsGatheringInterval)
 	return ldb, nil
@@ -179,6 +205,8 @@ func (db *Database) Close() error {
 		}
 		db.quitChan = nil
 	}
+	//TODO: error msg
+	db.pmemCache.Close()
 	return db.db.Close()
 }
 
@@ -209,17 +237,19 @@ func (db *Database) Delete(key []byte) error {
 // NewBatch creates a write-only key-value store that buffers changes to its host
 // database until a final write is called.
 func (db *Database) NewBatch() ethdb.Batch {
-	return &batch{
-		db: db.db,
-		b:  new(leveldb.Batch),
+	return &LeveldbBatch{
+		db:     db.db,
+		b:      new(leveldb.Batch),
+		Diskdb: db,
 	}
 }
 
 // NewBatchWithSize creates a write-only database batch with pre-allocated buffer.
 func (db *Database) NewBatchWithSize(size int) ethdb.Batch {
-	return &batch{
-		db: db.db,
-		b:  leveldb.MakeBatch(size),
+	return &LeveldbBatch{
+		db:     db.db,
+		b:      leveldb.MakeBatch(size),
+		Diskdb: db,
 	}
 }
 
@@ -262,6 +292,23 @@ func (db *Database) Compact(start []byte, limit []byte) error {
 // Path returns the path to the database directory.
 func (db *Database) Path() string {
 	return db.fn
+}
+
+// pmem_cache
+func (db *Database) Pmem_Has(key []byte) (bool, error) {
+	return db.pmemCache.Has(key)
+}
+
+func (db *Database) Pmem_Get(key []byte) ([]byte, error) {
+	return db.pmemCache.Get(key)
+}
+
+func (db *Database) Pmem_Put(key []byte, value []byte) error {
+	return db.pmemCache.Put(key, value)
+}
+
+func (db *Database) Pmem_Delete(key []byte) error {
+	return db.pmemCache.Delete(key)
 }
 
 // meter periodically retrieves internal leveldb counters and reports them to
@@ -470,44 +517,45 @@ func (db *Database) meter(refresh time.Duration) {
 
 // batch is a write-only leveldb batch that commits changes to its host database
 // when Write is called. A batch cannot be used concurrently.
-type batch struct {
-	db   *leveldb.DB
-	b    *leveldb.Batch
-	size int
+type LeveldbBatch struct {
+	db     *leveldb.DB
+	b      *leveldb.Batch
+	size   int
+	Diskdb *Database
 }
 
 // Put inserts the given value into the batch for later committing.
-func (b *batch) Put(key, value []byte) error {
+func (b *LeveldbBatch) Put(key, value []byte) error {
 	b.b.Put(key, value)
 	b.size += len(key) + len(value)
 	return nil
 }
 
 // Delete inserts the a key removal into the batch for later committing.
-func (b *batch) Delete(key []byte) error {
+func (b *LeveldbBatch) Delete(key []byte) error {
 	b.b.Delete(key)
 	b.size += len(key)
 	return nil
 }
 
 // ValueSize retrieves the amount of data queued up for writing.
-func (b *batch) ValueSize() int {
+func (b *LeveldbBatch) ValueSize() int {
 	return b.size
 }
 
 // Write flushes any accumulated data to disk.
-func (b *batch) Write() error {
+func (b *LeveldbBatch) Write() error {
 	return b.db.Write(b.b, nil)
 }
 
 // Reset resets the batch for reuse.
-func (b *batch) Reset() {
+func (b *LeveldbBatch) Reset() {
 	b.b.Reset()
 	b.size = 0
 }
 
 // Replay replays the batch contents.
-func (b *batch) Replay(w ethdb.KeyValueWriter) error {
+func (b *LeveldbBatch) Replay(w ethdb.KeyValueWriter) error {
 	return b.b.Replay(&replayer{writer: w})
 }
 

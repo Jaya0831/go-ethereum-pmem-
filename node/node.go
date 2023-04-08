@@ -64,7 +64,7 @@ type Node struct {
 	ipc           *ipcServer  // Stores information about the ipc http server
 	inprocHandler *rpc.Server // In-process RPC request handler to process the API requests
 
-	databases map[*closeTrackingDB]struct{} // All open databases
+	databases map[*CloseTrackingDB]struct{} // All open databases
 }
 
 const (
@@ -109,7 +109,7 @@ func New(conf *Config) (*Node, error) {
 		log:           conf.Logger,
 		stop:          make(chan struct{}),
 		server:        &p2p.Server{Config: conf.P2P},
-		databases:     make(map[*closeTrackingDB]struct{}),
+		databases:     make(map[*CloseTrackingDB]struct{}),
 	}
 
 	// Register built-in APIs.
@@ -774,15 +774,15 @@ func (n *Node) ResolveAncient(name string, ancient string) string {
 	return ancient
 }
 
-// closeTrackingDB wraps the Close method of a database. When the database is closed by the
+// CloseTrackingDB wraps the Close method of a database. When the database is closed by the
 // service, the wrapper removes it from the node's database map. This ensures that Node
 // won't auto-close the database if it is closed by the service that opened it.
-type closeTrackingDB struct {
+type CloseTrackingDB struct {
 	ethdb.Database
 	n *Node
 }
 
-func (db *closeTrackingDB) Close() error {
+func (db *CloseTrackingDB) Close() error {
 	db.n.lock.Lock()
 	delete(db.n.databases, db)
 	db.n.lock.Unlock()
@@ -791,7 +791,8 @@ func (db *closeTrackingDB) Close() error {
 
 // wrapDatabase ensures the database will be auto-closed when Node is closed.
 func (n *Node) wrapDatabase(db ethdb.Database) ethdb.Database {
-	wrapper := &closeTrackingDB{db, n}
+	// fmt.Printf("!!! type of db in func wrapDatabase: %T\n", db)
+	wrapper := &CloseTrackingDB{db, n}
 	n.databases[wrapper] = struct{}{}
 	return wrapper
 }

@@ -152,3 +152,20 @@ func New(client *rpc.Client) ethdb.Database {
 		remote: client,
 	}
 }
+
+// pmem_cache
+func (db *Database) Pmem_Has(key []byte) (bool, error) {
+	return false, nil
+}
+
+func (db *Database) Pmem_Get(key []byte) ([]byte, error) {
+	return nil, nil
+}
+
+func (db *Database) Pmem_Put(key []byte, value []byte) error {
+	return nil
+}
+
+func (db *Database) Pmem_Delete(key []byte) error {
+	return nil
+}

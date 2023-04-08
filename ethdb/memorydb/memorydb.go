@@ -204,6 +204,23 @@ func (db *Database) Len() int {
 	return len(db.db)
 }
 
+// pmem_cache
+func (db *Database) Pmem_Has(key []byte) (bool, error) {
+	return false, nil
+}
+
+func (db *Database) Pmem_Get(key []byte) ([]byte, error) {
+	return nil, nil
+}
+
+func (db *Database) Pmem_Put(key []byte, value []byte) error {
+	return nil
+}
+
+func (db *Database) Pmem_Delete(key []byte) error {
+	return nil
+}
+
 // keyvalue is a key-value tuple tagged with a deletion field to allow creating
 // memory-database write batches.
 type keyvalue struct {

@@ -188,4 +188,25 @@ type Database interface {
 	Compacter
 	Snapshotter
 	io.Closer
+	PmemCache
+}
+
+// Pmem
+type KeyValueReaderWithPmem interface {
+	KeyValueReader
+	PmemReader
+}
+type KeyValueWriterWithPmem interface {
+	KeyValueWriter
+	PmemWriter
+}
+type KeyValueWriterReaderWithPmem interface {
+	KeyValueReader
+	KeyValueWriter
+	PmemReader
+	PmemWriter
+}
+type KeyValueStoreWithPmem interface {
+	KeyValueStore
+	PmemCache
 }
