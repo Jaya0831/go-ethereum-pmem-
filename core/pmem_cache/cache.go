@@ -7,9 +7,13 @@ package pmem_cache
 //extern void on_miss(VMEMcache*, void*, size_t, void*);
 import "C"
 import (
+	"bytes"
 	"fmt"
 	"sync"
 	"unsafe"
+
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 )
 
 type PmemCache struct {
@@ -50,16 +54,25 @@ func registerPmemCache(pmemCache *PmemCache) error {
 	return nil
 }
 
+var (
+	pmemNewMeter        = metrics.NewRegisteredMeter("core/pmem_cache/new", nil)
+	pmemCloseMeter      = metrics.NewRegisteredMeter("core/pmem_cache/close", nil)
+	pmemPutError        = metrics.NewRegisteredMeter("core/pmem_cache/put_error", nil)
+	pmemPutInconsistent = metrics.NewRegisteredMeter("core/pmem_cache/put_inconsistent", nil)
+)
+
 func NewPmemcache() *PmemCache {
+	pmemNewMeter.Mark(1)
+	log.Info("PmemCache NewPmemcache()")
 	// FIXME: New和Open
 	if pmemCacheCurrent != nil {
-		fmt.Println("pmemCacheCurrent!=nil, do cleanPmemCache()")
+		log.Info("pmemCacheCurrent!=nil, do cleanPmemCache()")
 	}
 	cleanPmemCache()
 	//TODO: modify the configurations
 	path := "/dev/dax0.1"
 	path_c := C.CString(path)
-	cache_size := int64(1024 * 1024 * 1024 * 10) //10GB
+	cache_size := int64(1024 * 1024 * 1024 * 1) //1GB
 	// cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), (*C.vmemcache_on_miss)(C.on_miss))
 	cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), nil)
 	if cache == nil {
@@ -70,15 +83,17 @@ func NewPmemcache() *PmemCache {
 	}
 	err := registerPmemCache(pmemCache)
 	if err != nil {
-		fmt.Println(err.Error())
+		log.Error(err.Error())
 	}
 	return pmemCache
 }
 
 // always return nil
 func (pmemCache *PmemCache) Close() error {
+	pmemCloseMeter.Mark(1)
+	log.Info("PmemCache Close()")
 	if pmemCacheCurrent != pmemCache {
-		fmt.Println("pmemCacheCurrent!=pmemCache in Close()")
+		log.Error("pmemCacheCurrent!=pmemCache in Close()")
 	}
 	poolLock.Lock()
 	defer poolLock.Unlock()
@@ -89,25 +104,21 @@ func (pmemCache *PmemCache) Close() error {
 
 //export on_miss
 func on_miss(cache *C.VMEMcache, key unsafe.Pointer, k_size C.ulong, args unsafe.Pointer) {
-	// fmt.Print("---on_miss!\n")
-	value := []byte{'n', 'u', 'l', 'l'}
-	value_c := C.CBytes(value)
-	defer C.free(value_c)
-	C.wrapper_vmemcache_put(cache, key, value_c)
-	// fmt.Print("---finish on_miss\n")
+
 }
 
 func get(cache *C.VMEMcache, key []byte) []byte {
-	// fmt.Print("--get ", key, "\n")
+	// fmt.Println("get.key: ", key)
 	key_c := C.CBytes(key)
 	defer C.free(key_c)
 
-	value_c := C.wrapper_vmemcache_get(cache, key_c)
-	// fmt.Printf("--value_c in get: %s\n", C.GoString(value_c))
-	if value_c == nil {
+	value_struct := C.wrapper_vmemcache_get(cache, key_c, C.ulong(len(key)))
+	if value_struct.buf == nil {
 		return nil
 	}
-	return []byte(C.GoString(value_c))
+	value := C.GoBytes(value_struct.buf, value_struct.len)
+	// fmt.Println("get.value: ", value)
+	return value
 }
 
 // TODO: error is always nil
@@ -116,14 +127,29 @@ func (pmemCache *PmemCache) Get(key []byte) ([]byte, error) {
 }
 
 func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
+	// fmt.Println("put.key: ", key)
+	// fmt.Println("put.value: ", value)
 	key_c := C.CBytes(key)
 	value_c := C.CBytes(value)
-	defer C.free(key_c)
-	defer C.free(value_c)
-	tmp := int(C.wrapper_vmemcache_put(pmemCache.cache, key_c, value_c))
+	defer C.free(unsafe.Pointer(key_c))
+	defer C.free(unsafe.Pointer(value_c))
+	// fmt.Println("put._Ctype_ulong(len(key)): ", C.ulong(len(key)), " put._Ctype_ulong(len(value)): ", C.ulong(len(value)))
+	tmp := int(C.wrapper_vmemcache_put(pmemCache.cache, key_c, C.ulong(len(key)), value_c, C.ulong(len(value))))
 	if tmp == 0 {
+		if testV, _ := pmemCache.Get(key); !bytes.Equal(testV, value) {
+			pmemPutInconsistent.Mark(1)
+			fmt.Println("Pmem Put Inconsistent:")
+			fmt.Println("len(key): ", len(key), "cap(key): ", cap(key), "key: ", key)
+			fmt.Println("len(value): ", len(value), "cap(value): ", cap(value), "value: ", value)
+			fmt.Println("len(testV): ", len(testV), "cap(testV): ", cap(testV), "testV: ", testV)
+		}
+		// log.Info("Pmem Put Success")
 		return nil
 	} else {
+		pmemPutError.Mark(1)
+		fmt.Println("Pmem Put Error:")
+		fmt.Println("len(key): ", len(key), "cap(key): ", cap(key), "key: ", key)
+		fmt.Println("len(value): ", len(value), "cap(value): ", cap(value), "value: ", value)
 		return NewPmemError("Pmem Put Error")
 	}
 }
@@ -132,7 +158,7 @@ func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
 func (pmemCache *PmemCache) Delete(key []byte) error {
 	key_c := C.CBytes(key)
 	defer C.free(key_c)
-	tmp := int(C.wrapper_vmemcache_evict(pmemCache.cache, key_c))
+	tmp := int(C.wrapper_vmemcache_evict(pmemCache.cache, key_c, C.ulong(len(key))))
 	if tmp == 0 {
 		return nil
 	} else {
@@ -143,7 +169,7 @@ func (pmemCache *PmemCache) Delete(key []byte) error {
 func (pmemCache *PmemCache) Has(key []byte) (bool, error) {
 	key_c := C.CBytes(key)
 	defer C.free(key_c)
-	tmp := int(C.wrapper_vmemcache_exists(pmemCache.cache, key_c))
+	tmp := int(C.wrapper_vmemcache_exists(pmemCache.cache, key_c, C.ulong(len(key))))
 	if tmp == -1 {
 		return false, nil
 	} else if tmp == -2 {
