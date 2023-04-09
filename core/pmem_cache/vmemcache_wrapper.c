@@ -4,7 +4,6 @@
 #include <string.h>
 #include "vmemcache_wrapper.h"
 
-#define STR_AND_LEN(x) (x), strlen(x)
 
 VMEMcache* wrapper_vmemcache_new(const char *path, const size_t size, vmemcache_on_miss *miss)
 {
@@ -19,52 +18,69 @@ VMEMcache* wrapper_vmemcache_new(const char *path, const size_t size, vmemcache_
     return cache;
 }
 
-char* wrapper_vmemcache_get(VMEMcache* cache, const void *key)
+get_ret wrapper_vmemcache_get(VMEMcache* cache, const void *key, size_t key_size)
 {
-    // printf("---get_wrapper: key=%s, strlen(key)=%ld\n", (char *)key, strlen(key));
+    // printf("wrapper_vmemcache_get.key_size: %ld\n", key_size);
+    // printf("wrapper_vmemcache_get.key: [");
+    // for (int i = 0; i < key_size; i++)
+    // {
+    //     printf("%d ", ((char*)key)[i]);
+    // }
+    // printf("]\n");
     //TODO: 这样会调用两次vmcache_index_get（exist和get各一次），可能需要改动vmemcache库 
 	size_t vsize_c=0;
-    int exist = vmemcache_exists(cache, STR_AND_LEN(key), &vsize_c);
-    // printf("---vsize_c in wrapper_vmemcache_get=%ld\n", vsize_c);
+    int exist = vmemcache_exists(cache, key, key_size, &vsize_c);
+    // printf("wrapper_vmemcache_get.vsize_c: %ld\n", vsize_c);
     if (exist!=1)
     {
         // printf("---not exist!\n");
-        return NULL;
+        get_ret ret={0, NULL};
+        return ret;
     }
-    char *buf;
-    buf=(char*)malloc((vsize_c)*sizeof(char));
-    ssize_t len = vmemcache_get(cache, STR_AND_LEN(key), buf, (vsize_c)*sizeof(char), 0, NULL);
+    void *buf;
+    buf=malloc((vsize_c)*sizeof(char));
+    ssize_t len = vmemcache_get(cache, key, key_size, buf, (vsize_c)*sizeof(char), 0, NULL);
 	if (len >= 0) {
-        // printf("---%.*s\n", (int)len, buf);
-        return buf;
+        // printf("wrapper_vmemcache_get.Hit\n");
+        get_ret ret={(vsize_c)*sizeof(char), buf};
+        return ret;
     }
 	else {
-        // printf("---(key not found: %s)\n", (char *)key);
-        return NULL;
+        // printf("wrapper_vmemcache_get.Miss\n");
+        get_ret ret={0, NULL};
+        return ret;
     }
 }
 
 // return 0 on success, -1 on error
 // if the key is already exist, replace it.
-int wrapper_vmemcache_put(VMEMcache* cache, const void *key, const void *value)
+int wrapper_vmemcache_put(VMEMcache* cache, const void *key, size_t key_size, const void *value, size_t value_size)
 {
-    // printf("---put_wrapper: ");
-    // printf("key=%s, strlen(key)=%ld, ", (char *)key, strlen(key));
-    // printf("value=%s, strlen(value)=%ld\n", (char *)value, strlen(value));
-    vmemcache_evict(cache, STR_AND_LEN(key));
+    // printf("---put_wrapper: key_size=%ld, value_size=%ld\n", key_size, value_size);
+    // printf("wrapper_vmemcache_put.key: [");
+    // for (int i = 0; i < key_size; i++)
+    // {
+    //     printf("%d ", ((char*)key)[i]);
+    // }
+    // printf("], value: []");
+    // for (int i = 0; i < value_size; i++)
+    // {
+    //     printf("%d ", ((char*)value)[i]);
+    // }
+    // printf("]\n");
+    vmemcache_evict(cache, key, key_size);
     //FIXME: 当cache不写穿时，如果crash在这里发生，怎么保持consistency
-    return vmemcache_put(cache, STR_AND_LEN(key), STR_AND_LEN(value));
+    return vmemcache_put(cache, key, key_size, value, value_size);
 }
-
 
 // This function does not impact the replacement policy or statistics.
 // if the key exists, return the size of value
 // if not found, return -1
 // return -2 if the search couldn't be performed.
-int wrapper_vmemcache_exists(VMEMcache *cache, const void *key)
+int wrapper_vmemcache_exists(VMEMcache *cache, const void *key, size_t key_size)
 {
     unsigned long vsize;
-    int tmp = vmemcache_exists(cache, STR_AND_LEN(key), &vsize);
+    int tmp = vmemcache_exists(cache, key, key_size, &vsize);
     if (tmp==1) return vsize;
     if (tmp==0) return -1;
     else return -2;
@@ -76,7 +92,7 @@ void wrapper_vmemcache_delete(VMEMcache* cache)
 }
 
 // Returns 0 if an entry has been evicted, -1 otherwise.
-int wrapper_vmemcache_evict(VMEMcache *cache, const void *key)
+int wrapper_vmemcache_evict(VMEMcache *cache, const void *key, size_t key_size)
 {
-    vmemcache_evict(cache, STR_AND_LEN(key));
+    vmemcache_evict(cache, key, key_size);
 }

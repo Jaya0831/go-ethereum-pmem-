@@ -21,6 +21,7 @@
 package leveldb
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/pmem_cache"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -56,12 +58,30 @@ const (
 	metricsGatheringInterval = 3 * time.Second
 )
 
+var (
+	// pmemCache metrics
+	pmemHasHitMeter          = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/has_hit", nil)
+	pmemHitMeter             = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/hit", nil)
+	pmemMissMeter            = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/miss", nil)
+	pmemReadMeter            = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/read", nil)
+	pmemWriteMeter           = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/write", nil)
+	pmemWriteFromBatchMeter  = metrics.NewRegisteredMeter("ethdb/leveldbpmem/write_from_batch", nil)
+	pmemDeleteFromBatchMeter = metrics.NewRegisteredMeter("ethdb/leveldbpmem/delete_from_batch", nil)
+	pmemDeleteMeter          = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/delete", nil)
+	// for pmemCache test
+	pmemErrorMeter        = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/error", nil)
+	pmemGet1Meter         = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/get1", nil)
+	leveldbNewCustomMeter = metrics.NewRegisteredMeter("ethdb/leveldb/newCustom", nil)
+)
+
 // Database is a persistent key-value store. Apart from basic data storage
 // functionality it also supports batch writes and iterating over the keyspace in
 // binary-alphabetical order.
 type Database struct {
 	fn string      // filename for reporting
 	db *leveldb.DB // LevelDB instance
+	// pmemCache
+	pmemCache *pmem_cache.PmemCache
 
 	compTimeMeter       metrics.Meter // Meter for measuring the total time spent in database compaction
 	compReadMeter       metrics.Meter // Meter for measuring the data read during compaction
@@ -108,6 +128,7 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 // metrics reporting should use for surfacing internal stats.
 // The customize function allows the caller to modify the leveldb options.
 func NewCustom(file string, namespace string, customize func(options *opt.Options)) (*Database, error) {
+	leveldbNewCustomMeter.Mark(1)
 	options := configureOptions(customize)
 	logger := log.New("database", file)
 	usedCache := options.GetBlockCacheCapacity() + options.GetWriteBuffer()*2
@@ -125,12 +146,15 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	if err != nil {
 		return nil, err
 	}
+	//TODO: 用config信息定制初始化
+	pcache := pmem_cache.NewPmemcache()
 	// Assemble the wrapper with all the registered metrics
 	ldb := &Database{
-		fn:       file,
-		db:       db,
-		log:      logger,
-		quitChan: make(chan chan error),
+		fn:        file,
+		db:        db,
+		pmemCache: pcache,
+		log:       logger,
+		quitChan:  make(chan chan error),
 	}
 	ldb.compTimeMeter = metrics.NewRegisteredMeter(namespace+"compact/time", nil)
 	ldb.compReadMeter = metrics.NewRegisteredMeter(namespace+"compact/input", nil)
@@ -179,30 +203,52 @@ func (db *Database) Close() error {
 		}
 		db.quitChan = nil
 	}
+	//TODO: error msg
+	db.pmemCache.Close()
 	return db.db.Close()
 }
 
 // Has retrieves if a key is present in the key-value store.
 func (db *Database) Has(key []byte) (bool, error) {
+	if has, _ := db.pmemCache.Has(key); has {
+		pmemHasHitMeter.Mark(1)
+	}
 	return db.db.Has(key, nil)
 }
 
 // Get retrieves the given key if it's present in the key-value store.
 func (db *Database) Get(key []byte) ([]byte, error) {
+	pmemGet1Meter.Mark(1)
 	dat, err := db.db.Get(key, nil)
 	if err != nil {
 		return nil, err
+	}
+	enc_p, _ := db.pmemCache.Get(key)
+	if enc_p == nil {
+		db.pmemCache.Put(key, dat)
+		pmemMissMeter.Mark(1)
+		pmemWriteMeter.Mark(int64(len(dat)))
+	} else {
+		pmemReadMeter.Mark(int64(len(dat)))
+		pmemHitMeter.Mark(1)
+		if !bytes.Equal(dat, enc_p) {
+			pmemErrorMeter.Mark(1)
+		}
 	}
 	return dat, nil
 }
 
 // Put inserts the given value into the key-value store.
 func (db *Database) Put(key []byte, value []byte) error {
+	db.pmemCache.Put(key, value)
+	pmemWriteMeter.Mark(int64(len(value)))
 	return db.db.Put(key, value, nil)
 }
 
 // Delete removes the key from the key-value store.
 func (db *Database) Delete(key []byte) error {
+	db.pmemCache.Delete(key)
+	pmemDeleteMeter.Mark(1)
 	return db.db.Delete(key, nil)
 }
 
@@ -210,16 +256,18 @@ func (db *Database) Delete(key []byte) error {
 // database until a final write is called.
 func (db *Database) NewBatch() ethdb.Batch {
 	return &batch{
-		db: db.db,
-		b:  new(leveldb.Batch),
+		db:     db.db,
+		b:      new(leveldb.Batch),
+		diskdb: db,
 	}
 }
 
 // NewBatchWithSize creates a write-only database batch with pre-allocated buffer.
 func (db *Database) NewBatchWithSize(size int) ethdb.Batch {
 	return &batch{
-		db: db.db,
-		b:  leveldb.MakeBatch(size),
+		db:     db.db,
+		b:      leveldb.MakeBatch(size),
+		diskdb: db,
 	}
 }
 
@@ -471,15 +519,18 @@ func (db *Database) meter(refresh time.Duration) {
 // batch is a write-only leveldb batch that commits changes to its host database
 // when Write is called. A batch cannot be used concurrently.
 type batch struct {
-	db   *leveldb.DB
-	b    *leveldb.Batch
-	size int
+	db     *leveldb.DB
+	b      *leveldb.Batch
+	diskdb *Database
+	size   int
 }
 
 // Put inserts the given value into the batch for later committing.
 func (b *batch) Put(key, value []byte) error {
 	b.b.Put(key, value)
 	b.size += len(key) + len(value)
+	b.diskdb.pmemCache.Put(key, value)
+	pmemWriteFromBatchMeter.Mark(int64(len(value)))
 	return nil
 }
 
@@ -487,6 +538,8 @@ func (b *batch) Put(key, value []byte) error {
 func (b *batch) Delete(key []byte) error {
 	b.b.Delete(key)
 	b.size += len(key)
+	// b.diskdb.pmemCache.Delete(key)
+	pmemDeleteFromBatchMeter.Mark(1)
 	return nil
 }
 
