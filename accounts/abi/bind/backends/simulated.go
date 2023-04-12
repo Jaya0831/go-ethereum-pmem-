@@ -118,6 +118,7 @@ func (b *SimulatedBackend) Close() error {
 // Commit imports all the pending transactions as a single block and starts a
 // fresh new state.
 func (b *SimulatedBackend) Commit() common.Hash {
+	// fmt.Println("accounts/abi/bind/backends/simulated.go: Commit()")
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

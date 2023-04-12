@@ -136,6 +136,7 @@ func monitorFreeDiskSpace(sigc chan os.Signal, path string, freeDiskSpaceCritica
 }
 
 func ImportChain(chain *core.BlockChain, fn string) error {
+	// fmt.Println("cmd/utils/cmd.go")
 	// Watch for Ctrl-C while the import is running.
 	// If a signal is received, the import will stop at the next batch.
 	interrupt := make(chan os.Signal, 1)

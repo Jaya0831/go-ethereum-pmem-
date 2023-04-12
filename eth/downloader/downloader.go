@@ -27,6 +27,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -458,6 +459,7 @@ func (d *Downloader) getMode() SyncMode {
 // syncWithPeer starts a block synchronization based on the hash chain from the
 // specified peer and head hash.
 func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *big.Int, beaconMode bool) (err error) {
+	fmt.Println("eth/downloader/downloader.go: syncWithPeer")
 	d.mux.Post(StartEvent{})
 	defer func() {
 		// reset on error
@@ -1501,9 +1503,14 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 	}
 }
 
+var averageT time.Duration = 0
+var count int64 = 0
+
 // processFullSyncContent takes fetch results from the queue and imports them into the chain.
 func (d *Downloader) processFullSyncContent(ttd *big.Int, beaconMode bool) error {
+	fmt.Println("eth/downloader/downloader.go: processFullSyncContent")
 	for {
+		start := mclock.Now()
 		results := d.queue.Results(true)
 		if len(results) == 0 {
 			return nil
@@ -1549,10 +1556,17 @@ func (d *Downloader) processFullSyncContent(ttd *big.Int, beaconMode bool) error
 			log.Info("Legacy sync reached merge threshold", "number", rejected[0].Header.Number, "hash", rejected[0].Header.Hash(), "td", td, "ttd", ttd)
 			return ErrMergeTransition
 		}
+		end := mclock.Now()
+		duration := end.Sub(start)
+		fmt.Println("Duration: ", common.PrettyDuration(duration))
+		averageT = (averageT*time.Duration(count) + duration) / time.Duration(count+1)
+		count = count + 1
+		fmt.Println("Average Duration: ", common.PrettyDuration(averageT))
 	}
 }
 
 func (d *Downloader) importBlockResults(results []*fetchResult) error {
+	fmt.Println("eth/downloader/downloader.go: importBlockResults")
 	// Check for any early termination requests
 	if len(results) == 0 {
 		return nil
