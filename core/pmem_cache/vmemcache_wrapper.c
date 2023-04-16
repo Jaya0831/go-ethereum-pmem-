@@ -5,11 +5,12 @@
 #include "vmemcache_wrapper.h"
 
 
-VMEMcache* wrapper_vmemcache_new(const char *path, const size_t size, vmemcache_on_miss *miss)
+VMEMcache* wrapper_vmemcache_new(const char *path, const size_t size, vmemcache_on_evict *evict, vmemcache_on_evict_dirty *dirty)
 {
     VMEMcache* cache = vmemcache_new();
     vmemcache_set_size(cache, size);
-    vmemcache_callback_on_miss(cache, miss, 0);
+    vmemcache_callback_on_evict(cache, evict, 0);
+    vmemcache_callback_on_evict_dirty(cache, dirty, 0);
 	if (vmemcache_add(cache, path)) {
 		fprintf(stderr, "error: vmemcache_add: %s\n",
 				vmemcache_errormsg());
@@ -54,7 +55,7 @@ get_ret wrapper_vmemcache_get(VMEMcache* cache, const void *key, size_t key_size
 
 // return 0 on success, -1 on error
 // if the key is already exist, replace it.
-int wrapper_vmemcache_put(VMEMcache* cache, const void *key, size_t key_size, const void *value, size_t value_size)
+int wrapper_vmemcache_put(VMEMcache* cache, const void *key, size_t key_size, const void *value, size_t value_size, char dirty)
 {
     // printf("---put_wrapper: key_size=%ld, value_size=%ld\n", key_size, value_size);
     // printf("wrapper_vmemcache_put.key: [");
@@ -68,9 +69,10 @@ int wrapper_vmemcache_put(VMEMcache* cache, const void *key, size_t key_size, co
     //     printf("%d ", ((char*)value)[i]);
     // }
     // printf("]\n");
-    vmemcache_evict(cache, key, key_size);
+    vmemcache_evict_no_trigger(cache, key, key_size);
     //FIXME: 当cache不写穿时，如果crash在这里发生，怎么保持consistency
-    return vmemcache_put(cache, key, key_size, value, value_size);
+    if (dirty==0) return vmemcache_put(cache, key, key_size, value, value_size);
+    else return vmemcache_put_dirty(cache, key, key_size, value, value_size);
 }
 
 // This function does not impact the replacement policy or statistics.

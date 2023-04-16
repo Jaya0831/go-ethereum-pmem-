@@ -64,12 +64,13 @@ var (
 	pmemMissMeter            = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/miss", nil)
 	pmemReadMeter            = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/read", nil)
 	pmemWriteMeter           = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/write", nil)
+	pmemWriteDirtyMeter      = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/write_dirty", nil)
 	pmemWriteFromBatchMeter  = metrics.NewRegisteredMeter("ethdb/leveldbpmem/write_from_batch", nil)
 	pmemDeleteFromBatchMeter = metrics.NewRegisteredMeter("ethdb/leveldbpmem/delete_from_batch", nil)
 	pmemDeleteMeter          = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/delete", nil)
 	// for pmemCache test
-	pmemErrorMeter        = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/error", nil)
-	pmemGet1Meter         = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/get1", nil)
+	// pmemErrorMeter        = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/error", nil)
+	pmemGetMeter          = metrics.NewRegisteredMeter("ethdb/leveldb/pmem/get1", nil)
 	leveldbNewCustomMeter = metrics.NewRegisteredMeter("ethdb/leveldb/newCustom", nil)
 )
 
@@ -146,7 +147,7 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 		return nil, err
 	}
 	//TODO: 用config信息定制初始化
-	pcache := pmem_cache.NewPmemcache()
+	pcache := pmem_cache.NewPmemcache(db)
 	// Assemble the wrapper with all the registered metrics
 	ldb := &Database{
 		fn:        file,
@@ -210,7 +211,7 @@ func (db *Database) Close() error {
 // Has retrieves if a key is present in the key-value store.
 func (db *Database) Has(key []byte) (bool, error) {
 	if has, err := db.pmemCache.Has(key); has {
-		// pmemHasHitMeter.Mark(1)
+		pmemHasHitMeter.Mark(1)
 		return has, err
 	}
 	return db.db.Has(key, nil)
@@ -218,16 +219,20 @@ func (db *Database) Has(key []byte) (bool, error) {
 
 // Get retrieves the given key if it's present in the key-value store.
 func (db *Database) Get(key []byte) ([]byte, error) {
+	pmemGetMeter.Mark(1)
 	enc_p, err := db.pmemCache.Get(key)
 	if enc_p != nil {
+		pmemHitMeter.Mark(1)
+		pmemReadMeter.Mark(int64(len(enc_p)))
 		return enc_p, err
 	}
-	// pmemGet1Meter.Mark(1)
 	dat, err := db.db.Get(key, nil)
 	if err != nil {
 		return nil, err
 	}
-	db.pmemCache.Put(key, dat)
+	pmemMissMeter.Mark(1)
+	pmemWriteMeter.Mark(int64(len(dat)))
+	db.pmemCache.Put(key, dat, 0)
 	// enc_p, _ := db.pmemCache.Get(key)
 	// if enc_p == nil {
 	// 	db.pmemCache.Put(key, dat)
@@ -245,15 +250,15 @@ func (db *Database) Get(key []byte) ([]byte, error) {
 
 // Put inserts the given value into the key-value store.
 func (db *Database) Put(key []byte, value []byte) error {
-	db.pmemCache.Put(key, value)
-	// pmemWriteMeter.Mark(int64(len(value)))
+	db.pmemCache.Put(key, value, 1)
+	pmemWriteDirtyMeter.Mark(int64(len(value)))
 	return db.db.Put(key, value, nil)
 }
 
 // Delete removes the key from the key-value store.
 func (db *Database) Delete(key []byte) error {
 	db.pmemCache.Delete(key)
-	// pmemDeleteMeter.Mark(1)
+	pmemDeleteMeter.Mark(1)
 	return db.db.Delete(key, nil)
 }
 
@@ -534,8 +539,9 @@ type batch struct {
 func (b *batch) Put(key, value []byte) error {
 	b.b.Put(key, value)
 	b.size += len(key) + len(value)
-	b.diskdb.pmemCache.Put(key, value)
-	// pmemWriteFromBatchMeter.Mark(int64(len(value)))
+	b.diskdb.pmemCache.Put(key, value, 1)
+	pmemWriteFromBatchMeter.Mark(int64(len(value)))
+	pmemWriteDirtyMeter.Mark(int64(len(value)))
 	return nil
 }
 
@@ -545,7 +551,7 @@ func (b *batch) Delete(key []byte) error {
 	b.size += len(key)
 	b.diskdb.pmemCache.Delete(key)
 	log.Error("Trigger a Delete in batch")
-	// pmemDeleteFromBatchMeter.Mark(1)
+	pmemDeleteFromBatchMeter.Mark(1)
 	return nil
 }
 

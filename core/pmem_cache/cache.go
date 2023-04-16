@@ -5,6 +5,8 @@ package pmem_cache
 //#include <stdlib.h>
 //#include "vmemcache_wrapper.h"
 //extern void on_miss(VMEMcache*, void*, size_t, void*);
+//extern void on_evict(VMEMcache*, void*, size_t, void*);
+//extern void on_evict_dirty(VMEMcache*, void*, size_t, void*);
 import "C"
 import (
 	"bytes"
@@ -14,10 +16,12 @@ import (
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 type PmemCache struct {
-	cache *C.VMEMcache
+	under_leveldb *leveldb.DB
+	cache         *C.VMEMcache
 }
 
 type PmemError struct {
@@ -59,9 +63,12 @@ var (
 	pmemCloseMeter      = metrics.NewRegisteredMeter("core/pmem_cache/close", nil)
 	pmemPutError        = metrics.NewRegisteredMeter("core/pmem_cache/put_error", nil)
 	pmemPutInconsistent = metrics.NewRegisteredMeter("core/pmem_cache/put_inconsistent", nil)
+
+	pmemOnEvict      = metrics.NewRegisteredMeter("core/pmem_cache/on_evict", nil)
+	pmemOnEvictDirty = metrics.NewRegisteredMeter("core/pmem_cache/on_evict_dirty", nil)
 )
 
-func NewPmemcache() *PmemCache {
+func NewPmemcache(db *leveldb.DB) *PmemCache {
 	pmemNewMeter.Mark(1)
 	log.Info("PmemCache NewPmemcache()")
 	// FIXME: New和Open
@@ -72,14 +79,16 @@ func NewPmemcache() *PmemCache {
 	//TODO: modify the configurations
 	path := "/dev/dax0.1"
 	path_c := C.CString(path)
-	cache_size := int64(1024 * 1024 * 1024 * 1) //1GB
+	cache_size := int64(1024 * 1024 * 30 * 1) //30MB
 	// cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), (*C.vmemcache_on_miss)(C.on_miss))
-	cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), nil)
+	cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size),
+		(*C.vmemcache_on_evict)(C.on_evict), (*C.vmemcache_on_evict_dirty)(C.on_evict_dirty))
 	if cache == nil {
 		return nil
 	}
 	pmemCache := &PmemCache{
-		cache: cache,
+		cache:         cache,
+		under_leveldb: db,
 	}
 	err := registerPmemCache(pmemCache)
 	if err != nil {
@@ -102,9 +111,32 @@ func (pmemCache *PmemCache) Close() error {
 	return nil
 }
 
-//export on_miss
+// export on_miss: In our implementation, as wrapper_vmemcache_get will first call vmemcache_exists to ensure the existence of the key,
+// on_miss won't be called in the normal situation.
 func on_miss(cache *C.VMEMcache, key unsafe.Pointer, k_size C.ulong, args unsafe.Pointer) {
+	log.Error("on_miss")
+}
 
+//export on_evict
+func on_evict(cache *C.VMEMcache, key unsafe.Pointer, k_size C.ulong, args unsafe.Pointer) {
+	// TODO: for test, on_evict should be nil during runtime
+	pmemOnEvict.Mark(1)
+	// fmt.Print("---on_evict!\n")
+}
+
+//export on_evict_dirty
+func on_evict_dirty(cache *C.VMEMcache, key unsafe.Pointer, k_size C.ulong, args unsafe.Pointer) {
+	// TODO: write back to the disk
+	pmemOnEvictDirty.Mark(1)
+	db := pmemCacheCurrent.under_leveldb
+	value_struct := C.wrapper_vmemcache_get(cache, key, C.ulong(k_size))
+	if value_struct.buf == nil {
+		log.Error("core/pmem_cache.on_evict_dirty: value_struct.buf=nil")
+	}
+	key_go := C.GoBytes(key, C.int(k_size))
+	value_go := C.GoBytes(value_struct.buf, value_struct.len)
+	db.Put(key_go, value_go, nil)
+	// fmt.Print("---on_evict_dirty!\n")
 }
 
 func get(cache *C.VMEMcache, key []byte) []byte {
@@ -126,7 +158,7 @@ func (pmemCache *PmemCache) Get(key []byte) ([]byte, error) {
 	return get(pmemCache.cache, key), nil
 }
 
-func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
+func (pmemCache *PmemCache) Put(key []byte, value []byte, dirty byte) error {
 	// fmt.Println("put.key: ", key)
 	// fmt.Println("put.value: ", value)
 	key_c := C.CBytes(key)
@@ -134,7 +166,7 @@ func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
 	defer C.free(unsafe.Pointer(key_c))
 	defer C.free(unsafe.Pointer(value_c))
 	// fmt.Println("put._Ctype_ulong(len(key)): ", C.ulong(len(key)), " put._Ctype_ulong(len(value)): ", C.ulong(len(value)))
-	tmp := int(C.wrapper_vmemcache_put(pmemCache.cache, key_c, C.ulong(len(key)), value_c, C.ulong(len(value))))
+	tmp := int(C.wrapper_vmemcache_put(pmemCache.cache, key_c, C.ulong(len(key)), value_c, C.ulong(len(value)), C.char(dirty)))
 	if tmp == 0 {
 		if testV, _ := pmemCache.Get(key); !bytes.Equal(testV, value) {
 			pmemPutInconsistent.Mark(1)
