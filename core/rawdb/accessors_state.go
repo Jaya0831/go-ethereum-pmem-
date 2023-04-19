@@ -20,16 +20,30 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
+)
+
+var (
+	readPreimageMeter       = metrics.NewRegisteredMeter("core/rawdb/accessors_state/readPreimage", nil)
+	writePreimageMeter      = metrics.NewRegisteredMeter("core/rawdb/accessors_state/WritePreimages", nil)
+	readCodeMeter           = metrics.NewRegisteredMeter("core/rawdb/accessors_state/ReadCode", nil)
+	readCodeWithPrefixMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_state/ReadCodeWithPrefix", nil)
+	hasCodeMeter            = metrics.NewRegisteredMeter("core/rawdb/accessors_state/HasCode", nil)
+	hasCodeWithPrefixMeter  = metrics.NewRegisteredMeter("core/rawdb/accessors_state/HasCodeWithPrefix", nil)
+	writeCodeMeter          = metrics.NewRegisteredMeter("core/rawdb/accessors_state/WriteCode", nil)
+	deleteCodeMeter         = metrics.NewRegisteredMeter("core/rawdb/accessors_state/DeleteCode", nil)
 )
 
 // ReadPreimage retrieves a single preimage of the provided hash.
 func ReadPreimage(db ethdb.KeyValueReader, hash common.Hash) []byte {
+	readPreimageMeter.Mark(1)
 	data, _ := db.Get(preimageKey(hash))
 	return data
 }
 
 // WritePreimages writes the provided set of preimages to the database.
 func WritePreimages(db ethdb.KeyValueWriter, preimages map[common.Hash][]byte) {
+	writePreimageMeter.Mark(1)
 	for hash, preimage := range preimages {
 		if err := db.Put(preimageKey(hash), preimage); err != nil {
 			log.Crit("Failed to store trie preimage", "err", err)
@@ -41,6 +55,7 @@ func WritePreimages(db ethdb.KeyValueWriter, preimages map[common.Hash][]byte) {
 
 // ReadCode retrieves the contract code of the provided code hash.
 func ReadCode(db ethdb.KeyValueReader, hash common.Hash) []byte {
+	readCodeMeter.Mark(1)
 	// Try with the prefixed code scheme first, if not then try with legacy
 	// scheme.
 	data := ReadCodeWithPrefix(db, hash)
@@ -55,6 +70,7 @@ func ReadCode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 // The main difference between this function and ReadCode is this function
 // will only check the existence with latest scheme(with prefix).
 func ReadCodeWithPrefix(db ethdb.KeyValueReader, hash common.Hash) []byte {
+	readCodeWithPrefixMeter.Mark(1)
 	data, _ := db.Get(codeKey(hash))
 	return data
 }
@@ -62,6 +78,7 @@ func ReadCodeWithPrefix(db ethdb.KeyValueReader, hash common.Hash) []byte {
 // HasCode checks if the contract code corresponding to the
 // provided code hash is present in the db.
 func HasCode(db ethdb.KeyValueReader, hash common.Hash) bool {
+	hasCodeMeter.Mark(1)
 	// Try with the prefixed code scheme first, if not then try with legacy
 	// scheme.
 	if ok := HasCodeWithPrefix(db, hash); ok {
@@ -75,12 +92,14 @@ func HasCode(db ethdb.KeyValueReader, hash common.Hash) bool {
 // provided code hash is present in the db. This function will only check
 // presence using the prefix-scheme.
 func HasCodeWithPrefix(db ethdb.KeyValueReader, hash common.Hash) bool {
+	hasCodeWithPrefixMeter.Mark(1)
 	ok, _ := db.Has(codeKey(hash))
 	return ok
 }
 
 // WriteCode writes the provided contract code database.
 func WriteCode(db ethdb.KeyValueWriter, hash common.Hash, code []byte) {
+	writeCodeMeter.Mark(1)
 	if err := db.Put(codeKey(hash), code); err != nil {
 		log.Crit("Failed to store contract code", "err", err)
 	}
@@ -88,6 +107,7 @@ func WriteCode(db ethdb.KeyValueWriter, hash common.Hash, code []byte) {
 
 // DeleteCode deletes the specified contract code from the database.
 func DeleteCode(db ethdb.KeyValueWriter, hash common.Hash) {
+	deleteCodeMeter.Mark(1)
 	if err := db.Delete(codeKey(hash)); err != nil {
 		log.Crit("Failed to delete contract code", "err", err)
 	}

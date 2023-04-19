@@ -63,8 +63,8 @@ const (
 type Database struct {
 	fn string      // filename for reporting
 	db *leveldb.DB // LevelDB instance
-	// pmemCache
-	pmemCache *pmem_cache.PmemCache
+	// pmemCaches
+	pmemCaches [pmem_cache.CacheNum]*pmem_cache.PmemCache
 
 	compTimeMeter       metrics.Meter // Meter for measuring the total time spent in database compaction
 	compReadMeter       metrics.Meter // Meter for measuring the data read during compaction
@@ -143,15 +143,16 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	if err != nil {
 		return nil, err
 	}
-	//TODO: 用config信息定制初始化
-	pcache := pmem_cache.NewPmemcache()
 	// Assemble the wrapper with all the registered metrics
 	ldb := &Database{
-		fn:        file,
-		db:        db,
-		pmemCache: pcache,
-		log:       logger,
-		quitChan:  make(chan chan error),
+		fn: file,
+		db: db,
+		pmemCaches: [pmem_cache.CacheNum]*pmem_cache.PmemCache{
+			pmem_cache.NewPmemCache(pmem_cache.TrieCache, &pmem_cache.PmemCacheConfig{Path: "/dev/dax0.1", Size: 1024 * 1024 * 1024}),
+			pmem_cache.NewPmemCache(pmem_cache.ChainCache, &pmem_cache.PmemCacheConfig{Path: "/dev/dax0.1", Size: 1024 * 1024 * 1024}),
+		},
+		log:      logger,
+		quitChan: make(chan chan error),
 	}
 	ldb.compTimeMeter = metrics.NewRegisteredMeter(namespace+"compact/time", nil)
 	ldb.compReadMeter = metrics.NewRegisteredMeter(namespace+"compact/input", nil)
@@ -206,7 +207,8 @@ func (db *Database) Close() error {
 		db.quitChan = nil
 	}
 	//TODO: error msg
-	db.pmemCache.Close()
+	db.pmemCaches[pmem_cache.TrieCache].Close(pmem_cache.TrieCache)
+	db.pmemCaches[pmem_cache.ChainCache].Close(pmem_cache.ChainCache)
 	return db.db.Close()
 }
 
@@ -295,20 +297,20 @@ func (db *Database) Path() string {
 }
 
 // pmem_cache
-func (db *Database) Pmem_Has(key []byte) (bool, error) {
-	return db.pmemCache.Has(key)
+func (db *Database) Pmem_Has(cacheType int, key []byte) (bool, error) {
+	return db.pmemCaches[cacheType].Has(key)
 }
 
-func (db *Database) Pmem_Get(key []byte) ([]byte, error) {
-	return db.pmemCache.Get(key)
+func (db *Database) Pmem_Get(cacheType int, key []byte) ([]byte, error) {
+	return db.pmemCaches[cacheType].Get(key)
 }
 
-func (db *Database) Pmem_Put(key []byte, value []byte) error {
-	return db.pmemCache.Put(key, value)
+func (db *Database) Pmem_Put(cacheType int, key []byte, value []byte) error {
+	return db.pmemCaches[cacheType].Put(key, value)
 }
 
-func (db *Database) Pmem_Delete(key []byte) error {
-	return db.pmemCache.Delete(key)
+func (db *Database) Pmem_Delete(cacheType int, key []byte) error {
+	return db.pmemCaches[cacheType].Delete(key)
 }
 
 // meter periodically retrieves internal leveldb counters and reports them to

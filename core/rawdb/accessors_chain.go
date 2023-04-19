@@ -25,13 +25,81 @@ import (
 	"sort"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/pmem_cache"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 )
+
+var (
+	// pmemCache metrics
+	pmemHitMeter_chain             = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/hit", nil)
+	pmemMissMeter_chain            = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/miss", nil)
+	pmemReadMeter_chain            = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/read", nil)
+	pmemWriteMeter_chain           = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/write", nil)
+	pmemWriteFromBatchMeter_chain  = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/write_from_batch", nil)
+	pmemDeleteMeter_chain          = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/delete", nil)
+	pmemDeleteFromBatchMeter_chain = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/delete_from_batch", nil)
+	// for pmemCache test
+	pmemErrorMeter_chain     = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/error", nil)
+	pmemTryReadMeter_chain   = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/try_get", nil)
+	pmemTryWriteMeter_chain  = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/try_write", nil)
+	pmemTryDeleteMeter_chain = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/try_write", nil)
+	// pmemdbMeter_chain         = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/db", nil)
+	pmemEnterWriteMeter_chain = metrics.NewRegisteredMeter("core/rawdb/accessors_chain/pmem/enterWriter", nil)
+)
+
+// for correctness test
+func chainReadWithPmem(reader ethdb.KeyValueReader, key []byte, data []byte) {
+	pmemTryReadMeter_chain.Mark(1)
+	if pmdb, ok := reader.(ethdb.Database); ok {
+		enc_p, _ := pmdb.Pmem_Get(pmem_cache.ChainCache, key)
+		if enc_p == nil {
+			pmdb.Pmem_Put(pmem_cache.ChainCache, key, data)
+			pmemMissMeter_chain.Mark(1)
+			pmemWriteMeter_chain.Mark(int64(len(data)))
+		} else {
+			pmemReadMeter_chain.Mark(int64(len(data)))
+			pmemHitMeter_chain.Mark(1)
+			if !bytes.Equal(data, enc_p) {
+				pmemErrorMeter_chain.Mark(1)
+			}
+		}
+	}
+}
+
+// for correctness test
+func chainWriteWithPmem(writer ethdb.KeyValueWriter, key []byte, value []byte) {
+	log.Info("chainWriteWithPmem()")
+	pmemTryWriteMeter_chain.Mark(1)
+	if pmdb, ok := writer.(ethdb.Database); ok {
+		log.Info("chainWriteWithPmem(), ethdb.Database")
+		pmdb.Pmem_Put(pmem_cache.ChainCache, key, value)
+		pmemWriteMeter_chain.Mark(int64(len(value)))
+	} else if batch, ok := writer.(*leveldb.LeveldbBatch); ok {
+		log.Info("chainWriteWithPmem(), *leveldb.LeveldbBatch")
+		batch.Diskdb.Pmem_Put(pmem_cache.ChainCache, key, value)
+		pmemWriteMeter_chain.Mark(int64(len(value)))
+		pmemWriteFromBatchMeter_chain.Mark(int64(len(value)))
+	}
+}
+
+func chainDeleteWithPmem(writer ethdb.KeyValueWriter, key []byte) {
+	pmemTryDeleteMeter_chain.Mark(1)
+	if pmdb, ok := writer.(ethdb.Database); ok {
+		pmdb.Pmem_Delete(pmem_cache.ChainCache, key)
+		pmemDeleteMeter_chain.Mark(1)
+	} else if batch, ok := writer.(*leveldb.LeveldbBatch); ok {
+		batch.Diskdb.Pmem_Delete(pmem_cache.ChainCache, key)
+		pmemDeleteMeter_chain.Mark(1)
+		pmemDeleteFromBatchMeter_chain.Mark(1)
+	}
+}
 
 // ReadCanonicalHash retrieves the hash assigned to a canonical block number.
 func ReadCanonicalHash(db ethdb.Reader, number uint64) common.Hash {
@@ -41,6 +109,7 @@ func ReadCanonicalHash(db ethdb.Reader, number uint64) common.Hash {
 		if len(data) == 0 {
 			// Get it by hash from leveldb
 			data, _ = db.Get(headerHashKey(number))
+			chainReadWithPmem(db, headerHashKey(number), data)
 		}
 		return nil
 	})
@@ -52,6 +121,7 @@ func WriteCanonicalHash(db ethdb.KeyValueWriter, hash common.Hash, number uint64
 	if err := db.Put(headerHashKey(number), hash.Bytes()); err != nil {
 		log.Crit("Failed to store number to hash mapping", "err", err)
 	}
+	chainWriteWithPmem(db, headerHashKey(number), hash.Bytes())
 }
 
 // DeleteCanonicalHash removes the number to hash canonical mapping.
@@ -59,6 +129,7 @@ func DeleteCanonicalHash(db ethdb.KeyValueWriter, number uint64) {
 	if err := db.Delete(headerHashKey(number)); err != nil {
 		log.Crit("Failed to delete number to hash mapping", "err", err)
 	}
+	chainDeleteWithPmem(db, headerHashKey(number))
 }
 
 // ReadAllHashes retrieves all the hashes assigned to blocks at a certain heights,
@@ -145,6 +216,7 @@ func ReadAllCanonicalHashes(db ethdb.Iteratee, from uint64, to uint64, limit int
 // ReadHeaderNumber returns the header number assigned to a hash.
 func ReadHeaderNumber(db ethdb.KeyValueReader, hash common.Hash) *uint64 {
 	data, _ := db.Get(headerNumberKey(hash))
+	chainReadWithPmem(db, headerNumberKey(hash), data)
 	if len(data) != 8 {
 		return nil
 	}
@@ -159,6 +231,7 @@ func WriteHeaderNumber(db ethdb.KeyValueWriter, hash common.Hash, number uint64)
 	if err := db.Put(key, enc); err != nil {
 		log.Crit("Failed to store hash to number mapping", "err", err)
 	}
+	chainWriteWithPmem(db, key, enc)
 }
 
 // DeleteHeaderNumber removes hash->number mapping.
@@ -166,6 +239,7 @@ func DeleteHeaderNumber(db ethdb.KeyValueWriter, hash common.Hash) {
 	if err := db.Delete(headerNumberKey(hash)); err != nil {
 		log.Crit("Failed to delete hash to number mapping", "err", err)
 	}
+	chainDeleteWithPmem(db, headerNumberKey(hash))
 }
 
 // ReadHeadHeaderHash retrieves the hash of the current canonical head header.
@@ -320,6 +394,7 @@ func ReadHeaderRange(db ethdb.Reader, number uint64, count uint64) []rlp.RawValu
 		hash := ReadCanonicalHash(db, number)
 		for ; i >= limit && count > 0; i-- {
 			if data, _ := db.Get(headerKey(i, hash)); len(data) > 0 {
+				chainReadWithPmem(db, headerKey(i, hash), data)
 				rlpHeaders = append(rlpHeaders, data)
 				// Get the parent hash for next query
 				hash = types.HeaderParentHashFromRLP(data)
@@ -357,6 +432,7 @@ func ReadHeaderRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValu
 		}
 		// If not, try reading from leveldb
 		data, _ = db.Get(headerKey(number, hash))
+		chainReadWithPmem(db, headerKey(number, hash), data)
 		return nil
 	})
 	return data
@@ -367,6 +443,7 @@ func HasHeader(db ethdb.Reader, hash common.Hash, number uint64) bool {
 	if isCanon(db, number, hash) {
 		return true
 	}
+	// TODO: pmem has
 	if has, err := db.Has(headerKey(number, hash)); !has || err != nil {
 		return false
 	}
@@ -406,6 +483,7 @@ func WriteHeader(db ethdb.KeyValueWriter, header *types.Header) {
 	if err := db.Put(key, data); err != nil {
 		log.Crit("Failed to store header", "err", err)
 	}
+	chainWriteWithPmem(db, key, data)
 }
 
 // DeleteHeader removes all block header data associated with a hash.
@@ -414,6 +492,7 @@ func DeleteHeader(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	if err := db.Delete(headerNumberKey(hash)); err != nil {
 		log.Crit("Failed to delete hash to number mapping", "err", err)
 	}
+	chainDeleteWithPmem(db, headerNumberKey(hash))
 }
 
 // deleteHeaderWithoutNumber removes only the block header but does not remove
@@ -422,6 +501,7 @@ func deleteHeaderWithoutNumber(db ethdb.KeyValueWriter, hash common.Hash, number
 	if err := db.Delete(headerKey(number, hash)); err != nil {
 		log.Crit("Failed to delete header", "err", err)
 	}
+	chainDeleteWithPmem(db, headerKey(number, hash))
 }
 
 // isCanon is an internal utility method, to check whether the given number/hash
@@ -448,6 +528,7 @@ func ReadBodyRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValue 
 		}
 		// If not, try reading from leveldb
 		data, _ = db.Get(blockBodyKey(number, hash))
+		chainReadWithPmem(db, blockBodyKey(number, hash), data)
 		return nil
 	})
 	return data
@@ -466,7 +547,9 @@ func ReadCanonicalBodyRLP(db ethdb.Reader, number uint64) rlp.RawValue {
 		// Note: ReadCanonicalHash cannot be used here because it also
 		// calls ReadAncients internally.
 		hash, _ := db.Get(headerHashKey(number))
+		chainReadWithPmem(db, headerHashKey(number), hash)
 		data, _ = db.Get(blockBodyKey(number, common.BytesToHash(hash)))
+		chainReadWithPmem(db, blockBodyKey(number, common.BytesToHash(hash)), data)
 		return nil
 	})
 	return data
@@ -477,6 +560,7 @@ func WriteBodyRLP(db ethdb.KeyValueWriter, hash common.Hash, number uint64, rlp 
 	if err := db.Put(blockBodyKey(number, hash), rlp); err != nil {
 		log.Crit("Failed to store block body", "err", err)
 	}
+	chainWriteWithPmem(db, blockBodyKey(number, hash), rlp)
 }
 
 // HasBody verifies the existence of a block body corresponding to the hash.
@@ -484,6 +568,7 @@ func HasBody(db ethdb.Reader, hash common.Hash, number uint64) bool {
 	if isCanon(db, number, hash) {
 		return true
 	}
+	// TODO: pmem has
 	if has, err := db.Has(blockBodyKey(number, hash)); !has || err != nil {
 		return false
 	}
@@ -518,6 +603,7 @@ func DeleteBody(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	if err := db.Delete(blockBodyKey(number, hash)); err != nil {
 		log.Crit("Failed to delete block body", "err", err)
 	}
+	chainDeleteWithPmem(db, blockBodyKey(number, hash))
 }
 
 // ReadTdRLP retrieves a block's total difficulty corresponding to the hash in RLP encoding.
@@ -531,6 +617,7 @@ func ReadTdRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValue {
 		}
 		// If not, try reading from leveldb
 		data, _ = db.Get(headerTDKey(number, hash))
+		chainReadWithPmem(db, headerTDKey(number, hash), data)
 		return nil
 	})
 	return data
@@ -559,6 +646,7 @@ func WriteTd(db ethdb.KeyValueWriter, hash common.Hash, number uint64, td *big.I
 	if err := db.Put(headerTDKey(number, hash), data); err != nil {
 		log.Crit("Failed to store block total difficulty", "err", err)
 	}
+	chainWriteWithPmem(db, headerTDKey(number, hash), data)
 }
 
 // DeleteTd removes all block total difficulty data associated with a hash.
@@ -566,6 +654,7 @@ func DeleteTd(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	if err := db.Delete(headerTDKey(number, hash)); err != nil {
 		log.Crit("Failed to delete block total difficulty", "err", err)
 	}
+	chainDeleteWithPmem(db, headerTDKey(number, hash))
 }
 
 // HasReceipts verifies the existence of all the transaction receipts belonging
@@ -574,6 +663,7 @@ func HasReceipts(db ethdb.Reader, hash common.Hash, number uint64) bool {
 	if isCanon(db, number, hash) {
 		return true
 	}
+	// TODO: Pmem Has
 	if has, err := db.Has(blockReceiptsKey(number, hash)); !has || err != nil {
 		return false
 	}
@@ -591,6 +681,7 @@ func ReadReceiptsRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawVa
 		}
 		// If not, try reading from leveldb
 		data, _ = db.Get(blockReceiptsKey(number, hash))
+		chainReadWithPmem(db, blockReceiptsKey(number, hash), data)
 		return nil
 	})
 	return data
@@ -665,6 +756,7 @@ func WriteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64, rec
 	if err := db.Put(blockReceiptsKey(number, hash), bytes); err != nil {
 		log.Crit("Failed to store block receipts", "err", err)
 	}
+	chainWriteWithPmem(db, blockReceiptsKey(number, hash), bytes)
 }
 
 // DeleteReceipts removes all receipt data associated with a block hash.
@@ -672,6 +764,7 @@ func DeleteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	if err := db.Delete(blockReceiptsKey(number, hash)); err != nil {
 		log.Crit("Failed to delete block receipts", "err", err)
 	}
+	chainDeleteWithPmem(db, blockReceiptsKey(number, hash))
 }
 
 // storedReceiptRLP is the storage encoding of a receipt.

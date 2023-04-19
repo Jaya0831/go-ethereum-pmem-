@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/pmem_cache"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/leveldb"
@@ -58,18 +59,18 @@ var hasherPool = sync.Pool{
 
 var (
 	// pmemCache metrics
-	pmemHitMeter            = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/hit", nil)
-	pmemMissMeter           = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/miss", nil)
-	pmemReadMeter           = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/read", nil)
-	pmemWriteMeter          = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/write", nil)
-	pmemWriteFromBatchMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/write_from_batch", nil)
-	pmemDeleteMeter         = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/delete", nil)
+	pmemHitMeter_trie            = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/hit", nil)
+	pmemMissMeter_trie           = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/miss", nil)
+	pmemReadMeter_trie           = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/read", nil)
+	pmemWriteMeter_trie          = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/write", nil)
+	pmemWriteFromBatchMeter_trie = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/write_from_batch", nil)
+	pmemDeleteMeter_trie         = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/delete", nil)
 	// for pmemCache test
-	pmemErrorMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/error", nil)
-	pmemGet1Meter  = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/get1", nil)
-	pmemGet2Meter  = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/get2", nil)
+	pmemErrorMeter_trie = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/error", nil)
+	pmemGet1Meter_trie  = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/get1", nil)
+	pmemGet2Meter_trie  = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/get2", nil)
 	// pmemdbMeter         = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/db", nil)
-	pmemEnterWriteMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/enterWriter", nil)
+	pmemEnterWriteMeter_trie = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/enterWriter", nil)
 )
 
 func newNodeHasher() *nodeHasher       { return hasherPool.Get().(*nodeHasher) }
@@ -164,22 +165,22 @@ func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 	// TODO: what about the ReadlegacyTrieNode call in cmd/geth/snapshot.go
 	data, err := db.Get(hash.Bytes())
 	pmdb, ok := db.(ethdb.Database)
-	pmemGet1Meter.Mark(1)
+	pmemGet1Meter_trie.Mark(1)
 	if err != nil {
 		return nil
 	}
-	pmemGet2Meter.Mark(1)
+	pmemGet2Meter_trie.Mark(1)
 	if ok {
-		enc_p, _ := pmdb.Pmem_Get(hash[:])
+		enc_p, _ := pmdb.Pmem_Get(pmem_cache.TrieCache, hash[:])
 		if enc_p == nil {
-			pmdb.Pmem_Put(hash[:], data)
-			pmemMissMeter.Mark(1)
-			pmemWriteMeter.Mark(int64(len(data)))
+			pmdb.Pmem_Put(pmem_cache.TrieCache, hash[:], data)
+			pmemMissMeter_trie.Mark(1)
+			pmemWriteMeter_trie.Mark(int64(len(data)))
 		} else {
-			pmemReadMeter.Mark(int64(len(data)))
-			pmemHitMeter.Mark(1)
+			pmemReadMeter_trie.Mark(int64(len(data)))
+			pmemHitMeter_trie.Mark(1)
 			if !bytes.Equal(data, enc_p) {
-				pmemErrorMeter.Mark(1)
+				pmemErrorMeter_trie.Mark(1)
 			}
 		}
 	}
@@ -199,17 +200,17 @@ func WriteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte)
 	if err := db.Put(hash.Bytes(), node); err != nil {
 		log.Crit("Failed to store legacy trie node", "err", err)
 	}
-	pmemEnterWriteMeter.Mark(int64(len(node)))
+	pmemEnterWriteMeter_trie.Mark(int64(len(node)))
 	pmdb, ok := db.(ethdb.Database)
 	if ok {
-		pmdb.Pmem_Put(hash.Bytes(), node)
-		pmemWriteMeter.Mark(int64(len(node)))
+		pmdb.Pmem_Put(pmem_cache.TrieCache, hash.Bytes(), node)
+		pmemWriteMeter_trie.Mark(int64(len(node)))
 	}
 	b, ok2 := db.(*leveldb.LeveldbBatch)
 	if ok2 {
-		b.Diskdb.Pmem_Put(hash.Bytes(), node)
-		pmemWriteMeter.Mark(int64(len(node)))
-		pmemWriteFromBatchMeter.Mark(int64(len(node)))
+		b.Diskdb.Pmem_Put(pmem_cache.TrieCache, hash.Bytes(), node)
+		pmemWriteMeter_trie.Mark(int64(len(node)))
+		pmemWriteFromBatchMeter_trie.Mark(int64(len(node)))
 	}
 
 }
@@ -222,8 +223,8 @@ func DeleteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 	pmdb, ok := db.(ethdb.Database)
 	if ok {
-		pmdb.Pmem_Delete(hash[:])
-		pmemDeleteMeter.Mark(1)
+		pmdb.Pmem_Delete(pmem_cache.TrieCache, hash[:])
+		pmemDeleteMeter_trie.Mark(1)
 	}
 }
 

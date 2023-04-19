@@ -36,20 +36,20 @@ func NewTable(db ethdb.Database, prefix string) ethdb.Database {
 }
 
 // pmem_cache
-func (t *table) Pmem_Has(key []byte) (bool, error) {
-	return t.db.Pmem_Has(key)
+func (t *table) Pmem_Has(cacheType int, key []byte) (bool, error) {
+	return t.db.Pmem_Has(cacheType, key)
 }
 
-func (t *table) Pmem_Get(key []byte) ([]byte, error) {
-	return t.db.Pmem_Get(key)
+func (t *table) Pmem_Get(cacheType int, key []byte) ([]byte, error) {
+	return t.db.Pmem_Get(cacheType, key)
 }
 
-func (t *table) Pmem_Put(key []byte, value []byte) error {
-	return t.db.Pmem_Put(key, value)
+func (t *table) Pmem_Put(cacheType int, key []byte, value []byte) error {
+	return t.db.Pmem_Put(cacheType, key, value)
 }
 
-func (t *table) Pmem_Delete(key []byte) error {
-	return t.db.Pmem_Delete(key)
+func (t *table) Pmem_Delete(cacheType int, key []byte) error {
+	return t.db.Pmem_Delete(cacheType, key)
 }
 
 // Close is a noop to implement the Database interface.

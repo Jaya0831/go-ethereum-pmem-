@@ -20,6 +20,11 @@ type PmemCache struct {
 	cache *C.VMEMcache
 }
 
+type PmemCacheConfig struct {
+	Path string
+	Size int64
+}
+
 type PmemError struct {
 	msg string
 }
@@ -27,30 +32,40 @@ type PmemError struct {
 func NewPmemError(s string) *PmemError {
 	return &PmemError{msg: s}
 }
+
 func (pmemError *PmemError) Error() string {
 	return pmemError.msg
 }
 
-var pmemCacheCurrent *PmemCache = nil
-var poolLock sync.Mutex
+var (
+	poolLock      sync.Mutex
+	pmemCachePool [2]*PmemCache
+)
 
-func cleanPmemCache() error {
+const (
+	TrieCache  = iota //0
+	ChainCache = iota //1
+	CacheNum   = 2
+)
+
+// cleanPmemCache closes the current Pmem Cache according to the given cacheType, and clean its record in the PmemCachePool
+func cleanPmemCache(cacheType int) {
 	poolLock.Lock()
 	defer poolLock.Unlock()
-	if pmemCacheCurrent != nil {
-		rt := pmemCacheCurrent.Close()
-		pmemCacheCurrent = nil
-		return rt
+	if pmemCachePool[cacheType] != nil {
+		pmemCachePool[cacheType].Close(cacheType)
+		pmemCachePool[cacheType] = nil
 	}
-	return nil
 }
-func registerPmemCache(pmemCache *PmemCache) error {
+
+// registerPmemCache registers the pointer of the given pmemCache in PmemCachePool
+func registerPmemCache(cacheType int, pmemCache *PmemCache) error {
 	poolLock.Lock()
 	defer poolLock.Unlock()
-	if pmemCacheCurrent != nil {
+	if pmemCachePool[cacheType] != nil {
 		return NewPmemError("RegisterPmemCache Error")
 	}
-	pmemCacheCurrent = pmemCache
+	pmemCachePool[cacheType] = pmemCache
 	return nil
 }
 
@@ -61,45 +76,45 @@ var (
 	pmemPutInconsistent = metrics.NewRegisteredMeter("core/pmem_cache/put_inconsistent", nil)
 )
 
-func NewPmemcache() *PmemCache {
+// NewPmemCache creates a new cache according to the cacheType and config information, and return nil if an error occurs
+func NewPmemCache(cacheType int, config *PmemCacheConfig) *PmemCache {
 	pmemNewMeter.Mark(1)
 	log.Info("PmemCache NewPmemcache()")
-	// FIXME: New和Open
-	if pmemCacheCurrent != nil {
-		log.Info("pmemCacheCurrent!=nil, do cleanPmemCache()")
+	// FIXME: New和Open(改cache的tmpfile)
+	if pmemCachePool[cacheType] != nil {
+		log.Info("pmemCachePool[", cacheType, "]!=nil, do cleanPmemCache()")
 	}
-	cleanPmemCache()
-	//TODO: modify the configurations
-	path := "/dev/dax0.1"
-	path_c := C.CString(path)
-	cache_size := int64(1024 * 1024 * 1024 * 1) //1GB
-	// cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), (*C.vmemcache_on_miss)(C.on_miss))
-	cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), nil)
+	cleanPmemCache(cacheType)
+	// path := "/dev/dax0.1"
+	path_c := C.CString(config.Path)
+	defer C.free(unsafe.Pointer(path_c))
+	cache := C.wrapper_vmemcache_new(path_c, C.ulong(config.Size), nil)
 	if cache == nil {
+		log.Error("wrapper_vmemcache_new fails")
 		return nil
 	}
 	pmemCache := &PmemCache{
 		cache: cache,
 	}
-	err := registerPmemCache(pmemCache)
+	err := registerPmemCache(cacheType, pmemCache)
 	if err != nil {
 		log.Error(err.Error())
 	}
 	return pmemCache
 }
 
-// always return nil
-func (pmemCache *PmemCache) Close() error {
+// Close a PmemCache according to its `pointer` and `cacheType`. If the current Pmemcache pointer of `cacheType` is no equal to
+// `pointer`, an error is triggered.
+func (pmemCache *PmemCache) Close(cacheType int) {
 	pmemCloseMeter.Mark(1)
 	log.Info("PmemCache Close()")
-	if pmemCacheCurrent != pmemCache {
-		log.Error("pmemCacheCurrent!=pmemCache in Close()")
+	if pmemCachePool[cacheType] != pmemCache {
+		log.Error("pmemCachePool[", cacheType, "]!=pmemCache in Close()")
 	}
 	poolLock.Lock()
 	defer poolLock.Unlock()
-	pmemCacheCurrent = nil
+	pmemCachePool[cacheType] = nil
 	C.wrapper_vmemcache_delete(pmemCache.cache)
-	return nil
 }
 
 //export on_miss
@@ -127,8 +142,8 @@ func (pmemCache *PmemCache) Get(key []byte) ([]byte, error) {
 }
 
 func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
-	// fmt.Println("put.key: ", key)
-	// fmt.Println("put.value: ", value)
+	fmt.Println("put.key: ", key)
+	fmt.Println("put.value: ", value)
 	key_c := C.CBytes(key)
 	value_c := C.CBytes(value)
 	defer C.free(unsafe.Pointer(key_c))

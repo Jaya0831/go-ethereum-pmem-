@@ -154,18 +154,18 @@ func New(client *rpc.Client) ethdb.Database {
 }
 
 // pmem_cache
-func (db *Database) Pmem_Has(key []byte) (bool, error) {
+func (db *Database) Pmem_Has(cacheType int, key []byte) (bool, error) {
 	return false, nil
 }
 
-func (db *Database) Pmem_Get(key []byte) ([]byte, error) {
+func (db *Database) Pmem_Get(cacheType int, key []byte) ([]byte, error) {
 	return nil, nil
 }
 
-func (db *Database) Pmem_Put(key []byte, value []byte) error {
+func (db *Database) Pmem_Put(cacheType int, key []byte, value []byte) error {
 	return nil
 }
 
-func (db *Database) Pmem_Delete(key []byte) error {
+func (db *Database) Pmem_Delete(cacheType int, key []byte) error {
 	return nil
 }
