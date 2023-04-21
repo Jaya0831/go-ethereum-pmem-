@@ -17,9 +17,9 @@
 package rawdb
 
 import (
-	"bytes"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -158,57 +158,77 @@ func DeleteStorageTrieNode(db ethdb.KeyValueWriter, accountHash common.Hash, pat
 	}
 }
 
+var (
+	pmemGetTimer    = metrics.NewRegisteredTimer("core/rawdb/pmemGetTime", nil)
+	pmemWriteTimer  = metrics.NewRegisteredTimer("core/rawdb/pmemGetTime", nil)
+	levelDBGetTimer = metrics.NewRegisteredTimer("core/rawdb/levelDBGetTime", nil)
+)
+
 // ReadLegacyTrieNode retrieves the legacy trie node with the given
 // associated node hash.
 func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
-	// TODO: what about the ReadlegacyTrieNode call in cmd/geth/snapshot.go
-	data, err := db.Get(hash.Bytes())
+	// // println("ReadLegacyTrieNode")
+	// // TODO: what about the ReadlegacyTrieNode call in cmd/geth/snapshot.go
+	// pmemGet1Meter.Mark(1)
+	start := time.Now()
 	pmdb, ok := db.(ethdb.Database)
-	pmemGet1Meter.Mark(1)
-	if err != nil {
-		return nil
-	}
-	pmemGet2Meter.Mark(1)
 	if ok {
+		// pmemGet2Meter.Mark(1)
 		enc_p, _ := pmdb.Pmem_Get(hash[:])
-		if enc_p == nil {
-			pmdb.Pmem_Put(hash[:], data)
-			pmemMissMeter.Mark(1)
-			pmemWriteMeter.Mark(int64(len(data)))
-		} else {
-			pmemReadMeter.Mark(int64(len(data)))
-			pmemHitMeter.Mark(1)
-			if !bytes.Equal(data, enc_p) {
-				pmemErrorMeter.Mark(1)
-			}
+		if enc_p != nil {
+			// start2 := time.Now()
+			// db.Get(hash.Bytes())
+			// levelDBGetTimer.UpdateSince(start2)
+			// pmemReadMeter.Mark(int64(len(enc_p)))
+			// pmemHitMeter.Mark(1)
+			pmemGetTimer.UpdateSince(start)
+			return enc_p
 		}
 	}
+	data, err := db.Get(hash.Bytes())
+	if err != nil || data == nil {
+		pmemGetTimer.UpdateSince(start)
+		return nil
+	}
+	if ok {
+		pmdb.Pmem_Put(hash[:], data)
+		// pmemMissMeter.Mark(1)
+		// pmemWriteMeter.Mark(int64(len(data)))
+	}
+	pmemGetTimer.UpdateSince(start)
 	return data
 }
 
 // HasLegacyTrieNode checks if the trie node with the provided hash is present in db.
 func HasLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) bool {
+	// println("HasLegacyTrieNode")
 	//TODO: pmem cache
+	if pmdb, ok2 := db.(ethdb.Database); ok2 {
+		if has, _ := pmdb.Pmem_Has(hash.Bytes()); has {
+			return has
+		}
+	}
 	ok, _ := db.Has(hash.Bytes())
 	return ok
 }
 
 // WriteLegacyTrieNode writes the provided legacy trie node to database.
 func WriteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte) {
+	// println("WriteLegacyTrieNode")
 	//TODO: pmem cache
 	if err := db.Put(hash.Bytes(), node); err != nil {
 		log.Crit("Failed to store legacy trie node", "err", err)
 	}
-	pmemEnterWriteMeter.Mark(int64(len(node)))
+	// pmemEnterWriteMeter.Mark(int64(len(node)))
 	pmdb, ok := db.(ethdb.Database)
 	if ok {
 		pmdb.Pmem_Put(hash.Bytes(), node)
-		pmemWriteMeter.Mark(int64(len(node)))
+		// pmemWriteMeter.Mark(int64(len(node)))
 	}
 	b, ok2 := db.(*leveldb.LeveldbBatch)
 	if ok2 {
 		b.Diskdb.Pmem_Put(hash.Bytes(), node)
-		pmemWriteMeter.Mark(int64(len(node)))
+		// pmemWriteMeter.Mark(int64(len(node)))
 		pmemWriteFromBatchMeter.Mark(int64(len(node)))
 	}
 
@@ -216,13 +236,14 @@ func WriteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte)
 
 // DeleteLegacyTrieNode deletes the specified legacy trie node from database.
 func DeleteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash) {
+	// println("DeleteLegacyTrieNode")
 	//TODO: pmem cache
 	if err := db.Delete(hash.Bytes()); err != nil {
 		log.Crit("Failed to delete legacy trie node", "err", err)
 	}
 	pmdb, ok := db.(ethdb.Database)
 	if ok {
-		pmdb.Pmem_Delete(hash[:])
+		pmdb.Pmem_Delete(hash.Bytes())
 		pmemDeleteMeter.Mark(1)
 	}
 }

@@ -68,7 +68,7 @@ int wrapper_vmemcache_put(VMEMcache* cache, const void *key, size_t key_size, co
     //     printf("%d ", ((char*)value)[i]);
     // }
     // printf("]\n");
-    vmemcache_evict(cache, key, key_size);
+    vmemcache_evict_no_trigger(cache, key, key_size);
     //FIXME: 当cache不写穿时，如果crash在这里发生，怎么保持consistency
     return vmemcache_put(cache, key, key_size, value, value_size);
 }

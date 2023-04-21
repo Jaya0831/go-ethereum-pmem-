@@ -458,6 +458,7 @@ func (d *Downloader) getMode() SyncMode {
 // syncWithPeer starts a block synchronization based on the hash chain from the
 // specified peer and head hash.
 func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *big.Int, beaconMode bool) (err error) {
+	log.Info("syncWithPeer")
 	d.mux.Post(StartEvent{})
 	defer func() {
 		// reset on error
@@ -1503,6 +1504,7 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 
 // processFullSyncContent takes fetch results from the queue and imports them into the chain.
 func (d *Downloader) processFullSyncContent(ttd *big.Int, beaconMode bool) error {
+	log.Info("processFullSyncContent")
 	for {
 		results := d.queue.Results(true)
 		if len(results) == 0 {
@@ -1552,7 +1554,10 @@ func (d *Downloader) processFullSyncContent(ttd *big.Int, beaconMode bool) error
 	}
 }
 
+
+
 func (d *Downloader) importBlockResults(results []*fetchResult) error {
+	log.Info("importBlockResults")
 	// Check for any early termination requests
 	if len(results) == 0 {
 		return nil
@@ -1597,6 +1602,7 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 		}
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
+	log.Info("importBlockResults end")
 	return nil
 }
 

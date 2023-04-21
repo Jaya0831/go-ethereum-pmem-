@@ -4,7 +4,7 @@ package pmem_cache
 //#cgo LDFLAGS: -L${SRCDIR} -lvmemcache_wrapper -lvmemcache
 //#include <stdlib.h>
 //#include "vmemcache_wrapper.h"
-//extern void on_miss(VMEMcache*, void*, size_t, void*);
+//extern void on_evict(VMEMcache*, void*, size_t, void*);
 import "C"
 import (
 	"bytes"
@@ -17,7 +17,8 @@ import (
 )
 
 type PmemCache struct {
-	cache *C.VMEMcache
+	cache         *C.VMEMcache
+	pmemWriteLock sync.Mutex
 }
 
 type PmemError struct {
@@ -59,6 +60,7 @@ var (
 	pmemCloseMeter      = metrics.NewRegisteredMeter("core/pmem_cache/close", nil)
 	pmemPutError        = metrics.NewRegisteredMeter("core/pmem_cache/put_error", nil)
 	pmemPutInconsistent = metrics.NewRegisteredMeter("core/pmem_cache/put_inconsistent", nil)
+	pmemOnEvict         = metrics.NewRegisteredMeter("core/pmem_cache/on_evict", nil)
 )
 
 func NewPmemcache() *PmemCache {
@@ -70,7 +72,7 @@ func NewPmemcache() *PmemCache {
 	}
 	cleanPmemCache()
 	//TODO: modify the configurations
-	path := "/dev/dax0.1"
+	path := "/mnt/pmem0/ljy/test"
 	path_c := C.CString(path)
 	cache_size := int64(1024 * 1024 * 1024 * 1) //1GB
 	// cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), (*C.vmemcache_on_miss)(C.on_miss))
@@ -102,9 +104,9 @@ func (pmemCache *PmemCache) Close() error {
 	return nil
 }
 
-//export on_miss
-func on_miss(cache *C.VMEMcache, key unsafe.Pointer, k_size C.ulong, args unsafe.Pointer) {
-
+//export on_evict
+func on_evict(cache *C.VMEMcache, key unsafe.Pointer, k_size C.ulong, args unsafe.Pointer) {
+	pmemOnEvict.Mark(1)
 }
 
 func get(cache *C.VMEMcache, key []byte) []byte {
@@ -127,6 +129,8 @@ func (pmemCache *PmemCache) Get(key []byte) ([]byte, error) {
 }
 
 func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
+	pmemCache.pmemWriteLock.Lock()
+	defer pmemCache.pmemWriteLock.Unlock()
 	// fmt.Println("put.key: ", key)
 	// fmt.Println("put.value: ", value)
 	key_c := C.CBytes(key)
@@ -156,6 +160,8 @@ func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
 
 // Returns 0 if an entry has been deleted, -1 otherwise.
 func (pmemCache *PmemCache) Delete(key []byte) error {
+	pmemCache.pmemWriteLock.Lock()
+	defer pmemCache.pmemWriteLock.Unlock()
 	key_c := C.CBytes(key)
 	defer C.free(key_c)
 	tmp := int(C.wrapper_vmemcache_evict(pmemCache.cache, key_c, C.ulong(len(key))))

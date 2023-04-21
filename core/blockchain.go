@@ -1491,11 +1491,17 @@ func (bc *BlockChain) addFutureBlock(block *types.Block) error {
 	return nil
 }
 
+var (
+	insertChainTimer = metrics.NewRegisteredTimer("core/state_process/insert_chain", nil)
+	insertChainMeter = metrics.NewRegisteredMeter("core/state_process/insert_chain_count", nil)
+)
+
 // InsertChain attempts to insert the given batch of blocks in to the canonical
 // chain or, otherwise, create a fork. If an error is returned it will return
 // the index number of the failing block as well an error describing what went
 // wrong. After insertion is done, all accumulated events will be fired.
 func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
+	// log.Info("InsertChain")
 	// Sanity check that we have something meaningful to import
 	if len(chain) == 0 {
 		return 0, nil
@@ -1523,7 +1529,13 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 		return 0, errChainStopped
 	}
 	defer bc.chainmu.Unlock()
-	return bc.insertChain(chain, true, true)
+	// log.Info("InsertChain end")
+	insertChainMeter.Mark(int64(len(chain)))
+	start := time.Now()
+	tmp, err := bc.insertChain(chain, true, true)
+	insertChainTimer.UpdateSince(start)
+	return tmp, err
+
 }
 
 // insertChain is the internal implementation of InsertChain, which assumes that
@@ -1535,6 +1547,7 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 // is imported, but then new canon-head is added before the actual sidechain
 // completes, then the historic state could be pruned again
 func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool) (int, error) {
+	// log.Info("insertChain")
 	// If the chain is terminating, don't even bother starting up.
 	if bc.insertStopped() {
 		return 0, nil
@@ -1867,6 +1880,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		}
 	}
 	stats.ignored += it.remaining()
+
+	// log.Info("insertChain end")
 
 	return it.index, err
 }
