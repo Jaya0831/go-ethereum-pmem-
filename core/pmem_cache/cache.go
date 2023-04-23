@@ -7,7 +7,6 @@ package pmem_cache
 //extern void on_evict(VMEMcache*, void*, size_t, void*);
 import "C"
 import (
-	"bytes"
 	"fmt"
 	"sync"
 	"unsafe"
@@ -74,9 +73,9 @@ func NewPmemcache() *PmemCache {
 	//TODO: modify the configurations
 	path := "/mnt/pmem0/ljy/test"
 	path_c := C.CString(path)
-	cache_size := int64(1024 * 1024 * 1024 * 1) //1GB
+	cache_size := int64(1024 * 1024 * 256 * 1) //1GB
 	// cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), (*C.vmemcache_on_miss)(C.on_miss))
-	cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), nil)
+	cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), (*C.vmemcache_on_evict)(C.on_evict))
 	if cache == nil {
 		return nil
 	}
@@ -128,7 +127,18 @@ func (pmemCache *PmemCache) Get(key []byte) ([]byte, error) {
 	return get(pmemCache.cache, key), nil
 }
 
+var (
+	pmemUpdateMeter     = metrics.NewRegisteredMeter("core/pmem_cache/update", nil)
+	pmemWriteCountMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem_write_count", nil)
+)
+
 func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
+	// test Update
+	// pmemWriteCountMeter.Mark(1)
+	// if tmp := get(pmemCache.cache, key); tmp != nil {
+	// 	pmemUpdateMeter.Mark(1)
+	// }
+
 	pmemCache.pmemWriteLock.Lock()
 	defer pmemCache.pmemWriteLock.Unlock()
 	// fmt.Println("put.key: ", key)
@@ -140,13 +150,13 @@ func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
 	// fmt.Println("put._Ctype_ulong(len(key)): ", C.ulong(len(key)), " put._Ctype_ulong(len(value)): ", C.ulong(len(value)))
 	tmp := int(C.wrapper_vmemcache_put(pmemCache.cache, key_c, C.ulong(len(key)), value_c, C.ulong(len(value))))
 	if tmp == 0 {
-		if testV, _ := pmemCache.Get(key); !bytes.Equal(testV, value) {
-			pmemPutInconsistent.Mark(1)
-			fmt.Println("Pmem Put Inconsistent:")
-			fmt.Println("len(key): ", len(key), "cap(key): ", cap(key), "key: ", key)
-			fmt.Println("len(value): ", len(value), "cap(value): ", cap(value), "value: ", value)
-			fmt.Println("len(testV): ", len(testV), "cap(testV): ", cap(testV), "testV: ", testV)
-		}
+		// if testV, _ := pmemCache.Get(key); !bytes.Equal(testV, value) {
+		// 	pmemPutInconsistent.Mark(1)
+		// 	fmt.Println("Pmem Put Inconsistent:")
+		// 	fmt.Println("len(key): ", len(key), "cap(key): ", cap(key), "key: ", key)
+		// 	fmt.Println("len(value): ", len(value), "cap(value): ", cap(value), "value: ", value)
+		// 	fmt.Println("len(testV): ", len(testV), "cap(testV): ", cap(testV), "testV: ", testV)
+		// }
 		// log.Info("Pmem Put Success")
 		return nil
 	} else {
@@ -183,4 +193,22 @@ func (pmemCache *PmemCache) Has(key []byte) (bool, error) {
 	} else {
 		return true, nil
 	}
+}
+
+func (pmemCache *PmemCache) NewPmemReplayerWriter() *PmemReplayerWriter {
+	return &PmemReplayerWriter{
+		pmemWriter: pmemCache,
+	}
+}
+
+type PmemReplayerWriter struct {
+	pmemWriter *PmemCache
+}
+
+func (replayer *PmemReplayerWriter) Put(key, value []byte) error {
+	return replayer.pmemWriter.Put(key, value)
+}
+
+func (replayer *PmemReplayerWriter) Delete(key []byte) error {
+	return replayer.pmemWriter.Delete(key)
 }

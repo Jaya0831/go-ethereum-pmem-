@@ -238,18 +238,20 @@ func (db *Database) Delete(key []byte) error {
 // database until a final write is called.
 func (db *Database) NewBatch() ethdb.Batch {
 	return &LeveldbBatch{
-		db:     db.db,
-		b:      new(leveldb.Batch),
-		Diskdb: db,
+		IsTrieData: false,
+		db:         db.db,
+		b:          new(leveldb.Batch),
+		Diskdb:     db,
 	}
 }
 
 // NewBatchWithSize creates a write-only database batch with pre-allocated buffer.
 func (db *Database) NewBatchWithSize(size int) ethdb.Batch {
 	return &LeveldbBatch{
-		db:     db.db,
-		b:      leveldb.MakeBatch(size),
-		Diskdb: db,
+		IsTrieData: false,
+		db:         db.db,
+		b:          leveldb.MakeBatch(size),
+		Diskdb:     db,
 	}
 }
 
@@ -518,10 +520,11 @@ func (db *Database) meter(refresh time.Duration) {
 // batch is a write-only leveldb batch that commits changes to its host database
 // when Write is called. A batch cannot be used concurrently.
 type LeveldbBatch struct {
-	db     *leveldb.DB
-	b      *leveldb.Batch
-	size   int
-	Diskdb *Database
+	IsTrieData bool
+	db         *leveldb.DB
+	b          *leveldb.Batch
+	size       int
+	Diskdb     *Database
 }
 
 // Put inserts the given value into the batch for later committing.
@@ -545,6 +548,25 @@ func (b *LeveldbBatch) ValueSize() int {
 
 // Write flushes any accumulated data to disk.
 func (b *LeveldbBatch) Write() error {
+	if b.IsTrieData {
+		var leveldb_err, pmem_err error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			leveldb_err = b.db.Write(b.b, nil)
+		}()
+		go func() {
+			defer wg.Done()
+			pmem_err = b.Replay(b.Diskdb.pmemCache.NewPmemReplayerWriter())
+		}()
+		wg.Wait()
+		if leveldb_err != nil {
+			return leveldb_err
+		} else {
+			return pmem_err
+		}
+	}
 	return b.db.Write(b.b, nil)
 }
 

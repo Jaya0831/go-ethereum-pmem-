@@ -12,7 +12,7 @@ typedef struct get_ret
     void *buf;
 }get_ret;
 
-VMEMcache* wrapper_vmemcache_new(const char *path, const size_t size, vmemcache_on_miss *miss);
+VMEMcache* wrapper_vmemcache_new(const char *path, const size_t size, vmemcache_on_evict *evict);
 get_ret wrapper_vmemcache_get(VMEMcache* cache, const void *key, size_t key_size);
 int wrapper_vmemcache_put(VMEMcache* cache, const void *key, size_t key_size, const void *value, size_t value_size);
 int wrapper_vmemcache_exists(VMEMcache *cache, const void *key, size_t key_size);

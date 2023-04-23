@@ -58,12 +58,13 @@ var hasherPool = sync.Pool{
 
 var (
 	// pmemCache metrics
-	pmemHitMeter            = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/hit", nil)
-	pmemMissMeter           = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/miss", nil)
-	pmemReadMeter           = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/read", nil)
-	pmemWriteMeter          = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/write", nil)
-	pmemWriteFromBatchMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/write_from_batch", nil)
-	pmemDeleteMeter         = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/delete", nil)
+	pmemHitMeter             = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/hit", nil)
+	pmemMissMeter            = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/miss", nil)
+	pmemReadMeter            = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/read", nil)
+	pmemWriteMeter           = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/write", nil)
+	pmemWriteFromBatchMeter  = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/write_from_batch", nil)
+	pmemDeleteMeter          = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/delete", nil)
+	pmemDeleteFromBatchMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/delete_from_batch", nil)
 	// for pmemCache test
 	pmemErrorMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/error", nil)
 	pmemGet1Meter  = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/get1", nil)
@@ -173,14 +174,11 @@ func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 	start := time.Now()
 	pmdb, ok := db.(ethdb.Database)
 	if ok {
-		// pmemGet2Meter.Mark(1)
+		pmemGet2Meter.Mark(1)
 		enc_p, _ := pmdb.Pmem_Get(hash[:])
 		if enc_p != nil {
-			// start2 := time.Now()
-			// db.Get(hash.Bytes())
-			// levelDBGetTimer.UpdateSince(start2)
-			// pmemReadMeter.Mark(int64(len(enc_p)))
-			// pmemHitMeter.Mark(1)
+			pmemReadMeter.Mark(int64(len(enc_p)))
+			pmemHitMeter.Mark(1)
 			pmemGetTimer.UpdateSince(start)
 			return enc_p
 		}
@@ -188,21 +186,22 @@ func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 	data, err := db.Get(hash.Bytes())
 	if err != nil || data == nil {
 		pmemGetTimer.UpdateSince(start)
+		// levelDBGetTimer.UpdateSince(start)
 		return nil
 	}
 	if ok {
 		pmdb.Pmem_Put(hash[:], data)
-		// pmemMissMeter.Mark(1)
-		// pmemWriteMeter.Mark(int64(len(data)))
+		pmemMissMeter.Mark(1)
+		pmemWriteMeter.Mark(int64(len(data)))
 	}
 	pmemGetTimer.UpdateSince(start)
+	// levelDBGetTimer.UpdateSince(start)
 	return data
 }
 
 // HasLegacyTrieNode checks if the trie node with the provided hash is present in db.
 func HasLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) bool {
 	// println("HasLegacyTrieNode")
-	//TODO: pmem cache
 	if pmdb, ok2 := db.(ethdb.Database); ok2 {
 		if has, _ := pmdb.Pmem_Has(hash.Bytes()); has {
 			return has
@@ -215,20 +214,17 @@ func HasLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) bool {
 // WriteLegacyTrieNode writes the provided legacy trie node to database.
 func WriteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte) {
 	// println("WriteLegacyTrieNode")
-	//TODO: pmem cache
 	if err := db.Put(hash.Bytes(), node); err != nil {
 		log.Crit("Failed to store legacy trie node", "err", err)
 	}
-	// pmemEnterWriteMeter.Mark(int64(len(node)))
-	pmdb, ok := db.(ethdb.Database)
-	if ok {
+	if pmdb, ok := db.(ethdb.Database); ok {
 		pmdb.Pmem_Put(hash.Bytes(), node)
-		// pmemWriteMeter.Mark(int64(len(node)))
+		pmemWriteMeter.Mark(int64(len(node)))
 	}
-	b, ok2 := db.(*leveldb.LeveldbBatch)
-	if ok2 {
-		b.Diskdb.Pmem_Put(hash.Bytes(), node)
-		// pmemWriteMeter.Mark(int64(len(node)))
+	if b, ok2 := db.(*leveldb.LeveldbBatch); ok2 {
+		// b.Diskdb.Pmem_Put(hash.Bytes(), node)
+		b.IsTrieData = true
+		pmemWriteMeter.Mark(int64(len(node)))
 		pmemWriteFromBatchMeter.Mark(int64(len(node)))
 	}
 
@@ -241,10 +237,12 @@ func DeleteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash) {
 	if err := db.Delete(hash.Bytes()); err != nil {
 		log.Crit("Failed to delete legacy trie node", "err", err)
 	}
-	pmdb, ok := db.(ethdb.Database)
-	if ok {
+	if pmdb, ok := db.(ethdb.Database); ok {
 		pmdb.Pmem_Delete(hash.Bytes())
 		pmemDeleteMeter.Mark(1)
+	} else if b, ok2 := db.(*leveldb.LeveldbBatch); ok2 {
+		b.IsTrieData = true
+		pmemDeleteFromBatchMeter.Mark(1)
 	}
 }
 
