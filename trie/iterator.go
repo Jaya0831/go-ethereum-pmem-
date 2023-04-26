@@ -374,7 +374,13 @@ func (it *nodeIterator) peekSeek(seekKey []byte) (*nodeIteratorState, *int, []by
 	return nil, nil, nil, errIteratorEnd
 }
 
+// var (
+// 	resolveBlobCallMeter = metrics.NewRegisteredMeter("trie/iterator/resolveBlob", nil)
+// 	resolveHashCallMeter = metrics.NewRegisteredMeter("trie/iterator/resolveHash", nil)
+// )
+
 func (it *nodeIterator) resolveHash(hash hashNode, path []byte) (node, error) {
+	// resolveHashCallMeter.Mark(1)
 	if it.resolver != nil {
 		if blob := it.resolver(it.trie.owner, path, common.BytesToHash(hash)); len(blob) > 0 {
 			if resolved, err := decodeNode(hash, blob); err == nil {
@@ -391,6 +397,7 @@ func (it *nodeIterator) resolveHash(hash hashNode, path []byte) (node, error) {
 }
 
 func (it *nodeIterator) resolveBlob(hash hashNode, path []byte) ([]byte, error) {
+	// resolveBlobCallMeter.Mark(1)
 	if it.resolver != nil {
 		if blob := it.resolver(it.trie.owner, path, common.BytesToHash(hash)); len(blob) > 0 {
 			return blob, nil

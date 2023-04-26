@@ -17,7 +17,7 @@ import (
 
 type PmemCache struct {
 	cache         *C.VMEMcache
-	pmemWriteLock sync.Mutex
+	pmemWriteLock *sync.Mutex
 }
 
 type PmemError struct {
@@ -32,21 +32,11 @@ func (pmemError *PmemError) Error() string {
 }
 
 var pmemCacheCurrent *PmemCache = nil
-var poolLock sync.Mutex
+var currentLock sync.Mutex
 
-func cleanPmemCache() error {
-	poolLock.Lock()
-	defer poolLock.Unlock()
-	if pmemCacheCurrent != nil {
-		rt := pmemCacheCurrent.Close()
-		pmemCacheCurrent = nil
-		return rt
-	}
-	return nil
-}
 func registerPmemCache(pmemCache *PmemCache) error {
-	poolLock.Lock()
-	defer poolLock.Unlock()
+	currentLock.Lock()
+	defer currentLock.Unlock()
 	if pmemCacheCurrent != nil {
 		return NewPmemError("RegisterPmemCache Error")
 	}
@@ -62,14 +52,18 @@ var (
 	pmemOnEvict         = metrics.NewRegisteredMeter("core/pmem_cache/on_evict", nil)
 )
 
+func GetPmemCache() *PmemCache {
+	return pmemCacheCurrent
+}
+
 func NewPmemcache() *PmemCache {
 	pmemNewMeter.Mark(1)
 	log.Info("PmemCache NewPmemcache()")
 	// FIXME: New和Open
 	if pmemCacheCurrent != nil {
-		log.Info("pmemCacheCurrent!=nil, do cleanPmemCache()")
+		log.Info("pmemCacheCurrent!=nil, do pmemCacheCurrent.Close()")
+		pmemCacheCurrent.Close()
 	}
-	cleanPmemCache()
 	//TODO: modify the configurations
 	path := "/mnt/pmem0/ljy/test"
 	path_c := C.CString(path)
@@ -80,7 +74,8 @@ func NewPmemcache() *PmemCache {
 		return nil
 	}
 	pmemCache := &PmemCache{
-		cache: cache,
+		cache:         cache,
+		pmemWriteLock: &sync.Mutex{},
 	}
 	err := registerPmemCache(pmemCache)
 	if err != nil {
@@ -91,13 +86,13 @@ func NewPmemcache() *PmemCache {
 
 // always return nil
 func (pmemCache *PmemCache) Close() error {
+	currentLock.Lock()
+	defer currentLock.Unlock()
 	pmemCloseMeter.Mark(1)
 	log.Info("PmemCache Close()")
 	if pmemCacheCurrent != pmemCache {
 		log.Error("pmemCacheCurrent!=pmemCache in Close()")
 	}
-	poolLock.Lock()
-	defer poolLock.Unlock()
 	pmemCacheCurrent = nil
 	C.wrapper_vmemcache_delete(pmemCache.cache)
 	return nil
@@ -137,6 +132,7 @@ func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
 	// pmemWriteCountMeter.Mark(1)
 	// if tmp := get(pmemCache.cache, key); tmp != nil {
 	// 	pmemUpdateMeter.Mark(1)
+	// 	fmt.Println("PmemCache Update!")
 	// }
 
 	pmemCache.pmemWriteLock.Lock()

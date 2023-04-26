@@ -82,11 +82,11 @@ func (f *chainFreezer) Close() error {
 //
 // This functionality is deliberately broken off from block importing to avoid
 // incurring additional data shuffling delays on block propagation.
-func (f *chainFreezer) freeze(db ethdb.KeyValueStoreWithPmem) {
+func (f *chainFreezer) freeze(db ethdb.KeyValueStore) {
 	var (
 		backoff   bool
 		triggered chan struct{} // Used in tests
-		nfdb      = &nofreezedb{KeyValueStoreWithPmem: db}
+		nfdb      = &nofreezedb{KeyValueStore: db}
 	)
 	timer := time.NewTimer(freezerRecheckInterval)
 	defer timer.Stop()

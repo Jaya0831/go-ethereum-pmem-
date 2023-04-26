@@ -17,7 +17,9 @@
 // Package ethdb defines the interfaces for an Ethereum data store.
 package ethdb
 
-import "io"
+import (
+	"io"
+)
 
 // KeyValueReader wraps the Has and Get method of a backing data store.
 type KeyValueReader interface {
@@ -188,25 +190,4 @@ type Database interface {
 	Compacter
 	Snapshotter
 	io.Closer
-	PmemCache
-}
-
-// Pmem
-type KeyValueReaderWithPmem interface {
-	KeyValueReader
-	PmemReader
-}
-type KeyValueWriterWithPmem interface {
-	KeyValueWriter
-	PmemWriter
-}
-type KeyValueWriterReaderWithPmem interface {
-	KeyValueReader
-	KeyValueWriter
-	PmemReader
-	PmemWriter
-}
-type KeyValueStoreWithPmem interface {
-	KeyValueStore
-	PmemCache
 }

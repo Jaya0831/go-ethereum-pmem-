@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 )
 
 // Trie is a Merkle Patricia Trie. Use New to create a trie that sits on
@@ -178,7 +179,12 @@ func (t *Trie) TryGetNode(path []byte) ([]byte, int, error) {
 	return item, resolved, err
 }
 
+var (
+	tryGetNodeCallMeter = metrics.NewRegisteredMeter("trie/iterator/tryGetNode", nil)
+)
+
 func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, newnode node, resolved int, err error) {
+	tryGetNodeCallMeter.Mark(1)
 	// If non-existent path requested, abort
 	if origNode == nil {
 		return nil, nil, 0, nil
@@ -531,11 +537,16 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 	return n, nil
 }
 
+var (
+	resolveAndTrackCallMeter = metrics.NewRegisteredMeter("trie/iterator/resolveAndTrack", nil)
+)
+
 // resolveAndTrack loads node from the underlying store with the given node hash
 // and path prefix and also tracks the loaded node blob in tracer treated as the
 // node's original value. The rlp-encoded blob is preferred to be loaded from
 // database because it's easy to decode node while complex to encode node to blob.
 func (t *Trie) resolveAndTrack(n hashNode, prefix []byte) (node, error) {
+	resolveAndTrackCallMeter.Mark(1)
 	blob, err := t.reader.nodeBlob(prefix, common.BytesToHash(n))
 	if err != nil {
 		return nil, err

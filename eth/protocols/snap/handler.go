@@ -480,9 +480,14 @@ func ServiceGetByteCodesQuery(chain *core.BlockChain, req *GetByteCodesPacket) [
 	return codes
 }
 
+// var (
+// 	serviceGetTrieNodesQuery = metrics.NewRegisteredMeter("trie/handler/ServiceGetTrieNodesQuery", nil)
+// )
+
 // ServiceGetTrieNodesQuery assembles the response to a trie nodes query.
 // It is exposed to allow external packages to test protocol behavior.
 func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, start time.Time) ([][]byte, error) {
+	// serviceGetTrieNodesQuery.Mark(1)
 	if req.Bytes > softResponseLimit {
 		req.Bytes = softResponseLimit
 	}

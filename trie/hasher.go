@@ -165,6 +165,13 @@ func (h *hasher) fullnodeToHash(n *fullNode, force bool) node {
 	return h.hashData(enc)
 }
 
+func (h *hasher) HashRLP(enc []byte) []byte {
+	if len(enc) < 32 {
+		return enc // Nodes smaller than 32 bytes are stored inside their parent
+	}
+	return h.hashData(enc)
+}
+
 // encodedBytes returns the result of the last encoding operation on h.encbuf.
 // This also resets the encoder buffer.
 //

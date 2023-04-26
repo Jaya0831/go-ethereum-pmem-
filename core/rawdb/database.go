@@ -46,7 +46,7 @@ var (
 // freezerdb is a database wrapper that enabled freezer data retrievals.
 type freezerdb struct {
 	ancientRoot string
-	ethdb.KeyValueStoreWithPmem
+	ethdb.KeyValueStore
 	ethdb.AncientStore
 }
 
@@ -62,7 +62,7 @@ func (frdb *freezerdb) Close() error {
 	if err := frdb.AncientStore.Close(); err != nil {
 		errs = append(errs, err)
 	}
-	if err := frdb.KeyValueStoreWithPmem.Close(); err != nil {
+	if err := frdb.KeyValueStore.Close(); err != nil {
 		errs = append(errs, err)
 	}
 	if len(errs) != 0 {
@@ -93,7 +93,7 @@ func (frdb *freezerdb) Freeze(threshold uint64) error {
 
 // nofreezedb is a database wrapper that disables freezer data retrievals.
 type nofreezedb struct {
-	ethdb.KeyValueStoreWithPmem
+	ethdb.KeyValueStore
 }
 
 // HasAncient returns an error as we don't have a backing chain freezer.
@@ -175,9 +175,9 @@ func (db *nofreezedb) AncientDatadir() (string, error) {
 
 // NewDatabase creates a high level database on top of a given key-value data
 // store without a freezer moving immutable chain segments into cold storage.
-func NewDatabase(db ethdb.KeyValueStoreWithPmem) ethdb.Database {
+func NewDatabase(db ethdb.KeyValueStore) ethdb.Database {
 	enterNDBMeter.Mark(1)
-	return &nofreezedb{KeyValueStoreWithPmem: db}
+	return &nofreezedb{KeyValueStore: db}
 }
 
 // resolveChainFreezerDir is a helper function which resolves the absolute path
@@ -207,7 +207,7 @@ func resolveChainFreezerDir(ancient string) string {
 // value data store with a freezer moving immutable chain segments into cold
 // storage. The passed ancient indicates the path of root ancient directory
 // where the chain freezer can be opened.
-func NewDatabaseWithFreezer(db ethdb.KeyValueStoreWithPmem, ancient string, namespace string, readonly bool) (ethdb.Database, error) {
+func NewDatabaseWithFreezer(db ethdb.KeyValueStore, ancient string, namespace string, readonly bool) (ethdb.Database, error) {
 	enterNDBWFMeter.Mark(1)
 	// Create the idle freezer instance
 	frdb, err := newChainFreezer(resolveChainFreezerDir(ancient), namespace, readonly)
@@ -302,9 +302,9 @@ func NewDatabaseWithFreezer(db ethdb.KeyValueStoreWithPmem, ancient string, name
 		}()
 	}
 	return &freezerdb{
-		ancientRoot:           ancient,
-		KeyValueStoreWithPmem: db,
-		AncientStore:          frdb,
+		ancientRoot:   ancient,
+		KeyValueStore: db,
+		AncientStore:  frdb,
 	}, nil
 }
 

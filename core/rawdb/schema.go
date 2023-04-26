@@ -239,12 +239,12 @@ func genesisStateSpecKey(hash common.Hash) []byte {
 	return append(genesisPrefix, hash.Bytes()...)
 }
 
-// accountTrieNodeKey = trieNodeAccountPrefix + nodePath.
-func accountTrieNodeKey(path []byte) []byte {
+// AccountTrieNodeKey = trieNodeAccountPrefix + nodePath.
+func AccountTrieNodeKey(path []byte) []byte {
 	return append(trieNodeAccountPrefix, path...)
 }
 
-// storageTrieNodeKey = trieNodeStoragePrefix + accountHash + nodePath.
-func storageTrieNodeKey(accountHash common.Hash, path []byte) []byte {
+// StorageTrieNodeKey = trieNodeStoragePrefix + accountHash + nodePath.
+func StorageTrieNodeKey(accountHash common.Hash, path []byte) []byte {
 	return append(append(trieNodeStoragePrefix, accountHash.Bytes()...), path...)
 }

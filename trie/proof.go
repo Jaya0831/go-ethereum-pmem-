@@ -26,6 +26,10 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
+// var (
+// 	proveCallMeter = metrics.NewRegisteredMeter("trie/proof/Prove", nil)
+// )
+
 // Prove constructs a merkle proof for key. The result contains all encoded nodes
 // on the path to the value at key. The value itself is also included in the last
 // node and can be retrieved by verifying the proof.
@@ -34,6 +38,7 @@ import (
 // nodes of the longest existing prefix of the key (at least the root node), ending
 // with the node that proves the absence of the key.
 func (t *Trie) Prove(key []byte, fromLevel uint, proofDb ethdb.KeyValueWriter) error {
+	// proveCallMeter.Mark(1)
 	// Collect all nodes on the path to key.
 	var (
 		prefix []byte
@@ -444,6 +449,10 @@ func hasRightElement(node node, key []byte) bool {
 	return false
 }
 
+// var (
+// 	verifyRangeProofCallMeter = metrics.NewRegisteredMeter("trie/proof/VerifyRangeProof", nil)
+// )
+
 // VerifyRangeProof checks whether the given leaf nodes and edge proof
 // can prove the given trie leaves range is matched with the specific root.
 // Besides, the range should be consecutive (no gap inside) and monotonic
@@ -479,6 +488,7 @@ func hasRightElement(node node, key []byte) bool {
 // proofs are 'bloated' with neighbour leaves or random data, aside from the 'useful'
 // data, then the proof will still be accepted.
 func VerifyRangeProof(rootHash common.Hash, firstKey []byte, lastKey []byte, keys [][]byte, values [][]byte, proof ethdb.KeyValueReader) (bool, error) {
+	// verifyRangeProofCallMeter.Mark(1)
 	if len(keys) != len(values) {
 		return false, fmt.Errorf("inconsistent proof data, keys: %d, values: %d", len(keys), len(values))
 	}

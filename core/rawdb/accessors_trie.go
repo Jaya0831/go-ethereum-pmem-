@@ -24,7 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"golang.org/x/crypto/sha3"
@@ -56,23 +55,6 @@ var hasherPool = sync.Pool{
 	New: func() interface{} { return &nodeHasher{sha: sha3.NewLegacyKeccak256().(crypto.KeccakState)} },
 }
 
-var (
-	// pmemCache metrics
-	pmemHitMeter             = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/hit", nil)
-	pmemMissMeter            = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/miss", nil)
-	pmemReadMeter            = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/read", nil)
-	pmemWriteMeter           = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/write", nil)
-	pmemWriteFromBatchMeter  = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/write_from_batch", nil)
-	pmemDeleteMeter          = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/delete", nil)
-	pmemDeleteFromBatchMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/delete_from_batch", nil)
-	// for pmemCache test
-	pmemErrorMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/error", nil)
-	pmemGet1Meter  = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/get1", nil)
-	pmemGet2Meter  = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/get2", nil)
-	// pmemdbMeter         = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/db", nil)
-	pmemEnterWriteMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/enterWriter", nil)
-)
-
 func newNodeHasher() *nodeHasher       { return hasherPool.Get().(*nodeHasher) }
 func returnHasherToPool(h *nodeHasher) { hasherPool.Put(h) }
 
@@ -86,7 +68,7 @@ func (h *nodeHasher) hashData(data []byte) (n common.Hash) {
 // ReadAccountTrieNode retrieves the account trie node and the associated node
 // hash with the specified node path.
 func ReadAccountTrieNode(db ethdb.KeyValueReader, path []byte) ([]byte, common.Hash) {
-	data, err := db.Get(accountTrieNodeKey(path))
+	data, err := db.Get(AccountTrieNodeKey(path))
 	if err != nil {
 		return nil, common.Hash{}
 	}
@@ -98,7 +80,7 @@ func ReadAccountTrieNode(db ethdb.KeyValueReader, path []byte) ([]byte, common.H
 // HasAccountTrieNode checks the account trie node presence with the specified
 // node path and the associated node hash.
 func HasAccountTrieNode(db ethdb.KeyValueReader, path []byte, hash common.Hash) bool {
-	data, err := db.Get(accountTrieNodeKey(path))
+	data, err := db.Get(AccountTrieNodeKey(path))
 	if err != nil {
 		return false
 	}
@@ -109,14 +91,14 @@ func HasAccountTrieNode(db ethdb.KeyValueReader, path []byte, hash common.Hash) 
 
 // WriteAccountTrieNode writes the provided account trie node into database.
 func WriteAccountTrieNode(db ethdb.KeyValueWriter, path []byte, node []byte) {
-	if err := db.Put(accountTrieNodeKey(path), node); err != nil {
+	if err := db.Put(AccountTrieNodeKey(path), node); err != nil {
 		log.Crit("Failed to store account trie node", "err", err)
 	}
 }
 
 // DeleteAccountTrieNode deletes the specified account trie node from the database.
 func DeleteAccountTrieNode(db ethdb.KeyValueWriter, path []byte) {
-	if err := db.Delete(accountTrieNodeKey(path)); err != nil {
+	if err := db.Delete(AccountTrieNodeKey(path)); err != nil {
 		log.Crit("Failed to delete account trie node", "err", err)
 	}
 }
@@ -124,7 +106,7 @@ func DeleteAccountTrieNode(db ethdb.KeyValueWriter, path []byte) {
 // ReadStorageTrieNode retrieves the storage trie node and the associated node
 // hash with the specified node path.
 func ReadStorageTrieNode(db ethdb.KeyValueReader, accountHash common.Hash, path []byte) ([]byte, common.Hash) {
-	data, err := db.Get(storageTrieNodeKey(accountHash, path))
+	data, err := db.Get(StorageTrieNodeKey(accountHash, path))
 	if err != nil {
 		return nil, common.Hash{}
 	}
@@ -136,7 +118,7 @@ func ReadStorageTrieNode(db ethdb.KeyValueReader, accountHash common.Hash, path 
 // HasStorageTrieNode checks the storage trie node presence with the provided
 // node path and the associated node hash.
 func HasStorageTrieNode(db ethdb.KeyValueReader, accountHash common.Hash, path []byte, hash common.Hash) bool {
-	data, err := db.Get(storageTrieNodeKey(accountHash, path))
+	data, err := db.Get(StorageTrieNodeKey(accountHash, path))
 	if err != nil {
 		return false
 	}
@@ -147,66 +129,39 @@ func HasStorageTrieNode(db ethdb.KeyValueReader, accountHash common.Hash, path [
 
 // WriteStorageTrieNode writes the provided storage trie node into database.
 func WriteStorageTrieNode(db ethdb.KeyValueWriter, accountHash common.Hash, path []byte, node []byte) {
-	if err := db.Put(storageTrieNodeKey(accountHash, path), node); err != nil {
+	if err := db.Put(StorageTrieNodeKey(accountHash, path), node); err != nil {
 		log.Crit("Failed to store storage trie node", "err", err)
 	}
 }
 
 // DeleteStorageTrieNode deletes the specified storage trie node from the database.
 func DeleteStorageTrieNode(db ethdb.KeyValueWriter, accountHash common.Hash, path []byte) {
-	if err := db.Delete(storageTrieNodeKey(accountHash, path)); err != nil {
+	if err := db.Delete(StorageTrieNodeKey(accountHash, path)); err != nil {
 		log.Crit("Failed to delete storage trie node", "err", err)
 	}
 }
 
 var (
-	pmemGetTimer    = metrics.NewRegisteredTimer("core/rawdb/pmemGetTime", nil)
-	pmemWriteTimer  = metrics.NewRegisteredTimer("core/rawdb/pmemGetTime", nil)
 	levelDBGetTimer = metrics.NewRegisteredTimer("core/rawdb/levelDBGetTime", nil)
 )
 
 // ReadLegacyTrieNode retrieves the legacy trie node with the given
 // associated node hash.
 func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
-	// // println("ReadLegacyTrieNode")
-	// // TODO: what about the ReadlegacyTrieNode call in cmd/geth/snapshot.go
-	// pmemGet1Meter.Mark(1)
+	// println("ReadLegacyTrieNode")
 	start := time.Now()
-	pmdb, ok := db.(ethdb.Database)
-	if ok {
-		pmemGet2Meter.Mark(1)
-		enc_p, _ := pmdb.Pmem_Get(hash[:])
-		if enc_p != nil {
-			pmemReadMeter.Mark(int64(len(enc_p)))
-			pmemHitMeter.Mark(1)
-			pmemGetTimer.UpdateSince(start)
-			return enc_p
-		}
-	}
 	data, err := db.Get(hash.Bytes())
 	if err != nil || data == nil {
-		pmemGetTimer.UpdateSince(start)
-		// levelDBGetTimer.UpdateSince(start)
+		levelDBGetTimer.UpdateSince(start)
 		return nil
 	}
-	if ok {
-		pmdb.Pmem_Put(hash[:], data)
-		pmemMissMeter.Mark(1)
-		pmemWriteMeter.Mark(int64(len(data)))
-	}
-	pmemGetTimer.UpdateSince(start)
-	// levelDBGetTimer.UpdateSince(start)
+	levelDBGetTimer.UpdateSince(start)
 	return data
 }
 
 // HasLegacyTrieNode checks if the trie node with the provided hash is present in db.
 func HasLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) bool {
 	// println("HasLegacyTrieNode")
-	if pmdb, ok2 := db.(ethdb.Database); ok2 {
-		if has, _ := pmdb.Pmem_Has(hash.Bytes()); has {
-			return has
-		}
-	}
 	ok, _ := db.Has(hash.Bytes())
 	return ok
 }
@@ -217,32 +172,13 @@ func WriteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte)
 	if err := db.Put(hash.Bytes(), node); err != nil {
 		log.Crit("Failed to store legacy trie node", "err", err)
 	}
-	if pmdb, ok := db.(ethdb.Database); ok {
-		pmdb.Pmem_Put(hash.Bytes(), node)
-		pmemWriteMeter.Mark(int64(len(node)))
-	}
-	if b, ok2 := db.(*leveldb.LeveldbBatch); ok2 {
-		// b.Diskdb.Pmem_Put(hash.Bytes(), node)
-		b.IsTrieData = true
-		pmemWriteMeter.Mark(int64(len(node)))
-		pmemWriteFromBatchMeter.Mark(int64(len(node)))
-	}
-
 }
 
 // DeleteLegacyTrieNode deletes the specified legacy trie node from database.
 func DeleteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash) {
 	// println("DeleteLegacyTrieNode")
-	//TODO: pmem cache
 	if err := db.Delete(hash.Bytes()); err != nil {
 		log.Crit("Failed to delete legacy trie node", "err", err)
-	}
-	if pmdb, ok := db.(ethdb.Database); ok {
-		pmdb.Pmem_Delete(hash.Bytes())
-		pmemDeleteMeter.Mark(1)
-	} else if b, ok2 := db.(*leveldb.LeveldbBatch); ok2 {
-		b.IsTrieData = true
-		pmemDeleteFromBatchMeter.Mark(1)
 	}
 }
 

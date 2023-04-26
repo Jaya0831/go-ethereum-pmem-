@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/pmem_cache"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -57,17 +59,20 @@ var (
 	memcacheCommitTimeTimer  = metrics.NewRegisteredResettingTimer("trie/memcache/commit/time", nil)
 	memcacheCommitNodesMeter = metrics.NewRegisteredMeter("trie/memcache/commit/nodes", nil)
 	memcacheCommitSizeMeter  = metrics.NewRegisteredMeter("trie/memcache/commit/size", nil)
+)
 
-	// // pmemCache metrics
-	// memcachePmemHitMeter   = metrics.NewRegisteredMeter("trie/memcache/pmem/hit", nil)
-	// memcachePmemMissMeter  = metrics.NewRegisteredMeter("trie/memcache/pmem/miss", nil)
-	// memcachePmemReadMeter  = metrics.NewRegisteredMeter("trie/memcache/pmem/read", nil)
-	// memcachePmemWriteMeter = metrics.NewRegisteredMeter("trie/memcache/pmem/write", nil)
-	// // for pmemCache test
-	// memcachePmemErrorMeter1 = metrics.NewRegisteredMeter("trie/memcache/pmem/error1", nil)
-	// memcachePmemErrorMeter2 = metrics.NewRegisteredMeter("trie/memcache/pmem/error2", nil)
-	// memcachePmemGetMeter    = metrics.NewRegisteredMeter("trie/memcache/pmem/get", nil)
-	memcacheTestPmemMeter = metrics.NewRegisteredMeter("trie/memcache/test/pmem", nil)
+var (
+	// pmemCache metrics
+	pmemHitMeter        = metrics.NewRegisteredMeter("trie/database/pmem/hit", nil)
+	pmemMissMeter       = metrics.NewRegisteredMeter("trie/database/pmem/miss", nil)
+	pmemReadMeter       = metrics.NewRegisteredMeter("trie/database/pmem/read", nil)
+	pmemWriteMeter      = metrics.NewRegisteredMeter("trie/database/pmem/write", nil)
+	pmemDeleteMeter     = metrics.NewRegisteredMeter("trie/database/pmem/delete", nil)
+	pmemWriteCountMeter = metrics.NewRegisteredMeter("trie/database/pmem/write_count", nil)
+	// for pmemCache test
+	pmemErrorMeter            = metrics.NewRegisteredMeter("trie/database/pmem/error", nil)
+	pmemHashInconsistentMeter = metrics.NewRegisteredMeter("trie/database/pmem/hash_inconsistent", nil)
+	pmemGetMeter              = metrics.NewRegisteredMeter("trie/database/pmem/get", nil)
 )
 
 // Database is an intermediate write layer between the trie data structures and
@@ -81,8 +86,7 @@ var (
 type Database struct {
 	diskdb ethdb.Database // Persistent storage for matured trie nodes
 
-	//TODO: double-check
-	// pmemCache *pmem_cache.PmemCache // PmemCache
+	pmemCache *pmem_cache.PmemCache // PmemCache
 
 	cleans  *fastcache.Cache            // GC friendly memory cache of clean node RLPs
 	dirties map[common.Hash]*cachedNode // Data and references relationships of dirty trie nodes
@@ -307,18 +311,15 @@ func NewDatabaseWithConfig(diskdb ethdb.Database, config *Config) *Database {
 	if config != nil && config.Preimages {
 		preimage = newPreimageStore(diskdb)
 	}
-	// // create a new pmem cache
-	// // TODO: config
-	// pcache := pmem_cache.NewPmemcache()
 
 	db := &Database{
 		diskdb: diskdb,
-		// pmemCache: pcache,
 		cleans: cleans,
 		dirties: map[common.Hash]*cachedNode{{}: {
 			children: make(map[common.Hash]uint16),
 		}},
 		preimages: preimage,
+		pmemCache: pmem_cache.GetPmemCache(),
 	}
 	return db
 }
@@ -355,9 +356,14 @@ func (db *Database) insert(hash common.Hash, size int, node node) {
 	db.dirtiesSize += common.StorageSize(common.HashLength + entry.size)
 }
 
+var (
+	pmemGetTimer = metrics.NewRegisteredTimer("trie/database/pmemGet", nil)
+	// hashTimer    = metrics.NewRegisteredTimer("trie/database/hash", nil)
+)
+
 // node retrieves a cached trie node from memory, or returns nil if none can be
 // found in the memory cache.
-func (db *Database) node(hash common.Hash) node {
+func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node {
 	// fmt.Printf("type of db.diskdb in func node: %T\n", db.diskdb)
 	// Retrieve the node from the clean cache if available
 	if db.cleans != nil {
@@ -382,33 +388,92 @@ func (db *Database) node(hash common.Hash) node {
 	}
 	memcacheDirtyMissMeter.Mark(1)
 
-	// enc_p := db.pmemCache.Get(hash[:])
-	// memcachePmemGetMeter.Mark(1)
-	// Content unavailable in memory, attempt to retrieve from disk
-	// enc, err := db.diskdb.Get(hash[:])
-	// if _, ok := (db.diskdb).(*rawdb.Nofreezedb); ok {
-	// 	memcacheTestPmemMeter.Mark(1)
-	// }
+	// try get from pmem before reach the disk
+	if db.pmemCache != nil {
+		pmemGetMeter.Mark(1)
+		if owner == (common.Hash{}) {
+			start := time.Now()
+			pmem_enc, error := db.pmemCache.Get(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))))
+			pmemGetTimer.UpdateSince(start)
+			if error != nil {
+				log.Error("Pmem Get Error!")
+			}
+			if pmem_enc != nil {
+				pmemHitMeter.Mark(1)
+				pmemReadMeter.Mark(int64(len(pmem_enc)))
+				//for correctness test
+				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				// h := newHasher(false)
+				// start := time.Now()
+				// pmem_hash := common.BytesToHash(h.HashRLP(pmem_enc)).Bytes()
+				// hashTimer.UpdateSince(start)
+				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
+					pmemHashInconsistentMeter.Mark(1)
+				} else {
+					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+						pmemErrorMeter.Mark(1)
+						fmt.Println("pmem get errror! 1")
+						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					}
+					// return mustDecodeNodeUnsafe(hash[:], pmem_enc[common.HashLength:])
+				}
+			} else {
+				pmemMissMeter.Mark(1)
+			}
+		} else {
+			start := time.Now()
+			pmem_enc, error := db.pmemCache.Get(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))))
+			pmemGetTimer.UpdateSince(start)
+			if error != nil {
+				log.Error("Pmem Get Error!")
+			}
+			if pmem_enc != nil {
+				pmemHitMeter.Mark(1)
+				pmemReadMeter.Mark(int64(len(pmem_enc)))
+				//for correctness test
+				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				// h := newHasher(false)
+				// start := time.Now()
+				// pmem_hash := common.BytesToHash(h.HashRLP(pmem_enc)).Bytes()
+				// hashTimer.UpdateSince(start)
+				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
+					pmemHashInconsistentMeter.Mark(1)
+				} else {
+					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+						pmemErrorMeter.Mark(1)
+						fmt.Println("pmem get errror! 2")
+						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					}
+					// return mustDecodeNodeUnsafe(hash[:], pmem_enc[common.HashLength:])
+				}
+			} else {
+				pmemMissMeter.Mark(1)
+			}
+		}
+	}
+	pmemMissMeter.Mark(1)
+
 	enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
-	// if err != nil || enc == nil {
 	if enc == nil {
 		return nil
 	}
-	// if enc_p == nil {
-	// 	db.pmemCache.Put(hash[:], enc)
-	// 	memcachePmemMissMeter.Mark(1)
-	// 	memcachePmemWriteMeter.Mark(int64(len(enc)))
-	// } else {
-	// 	memcachePmemReadMeter.Mark(int64(len(enc)))
-	// 	memcachePmemHitMeter.Mark(1)
-	// 	if !bytes.Equal(enc, enc_p) {
-	// 		memcachePmemErrorMeter1.Mark(1)
-	// 	}
-	// }
 	if db.cleans != nil {
 		db.cleans.Set(hash[:], enc)
 		memcacheCleanMissMeter.Mark(1)
 		memcacheCleanWriteMeter.Mark(int64(len(enc)))
+	}
+	if db.pmemCache != nil {
+		pmemWriteCountMeter.Mark(1)
+		pmemWriteMeter.Mark(int64(len(enc)))
+		if owner == (common.Hash{}) {
+			db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))), append(hash.Bytes(), enc...))
+		} else {
+			db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))), append(hash.Bytes(), enc...))
+		}
 	}
 	// The returned value from database is in its own copy,
 	// safe to use mustDecodeNodeUnsafe for decoding.
@@ -417,7 +482,7 @@ func (db *Database) node(hash common.Hash) node {
 
 // Node retrieves an encoded cached trie node from memory. If it cannot be found
 // cached, the method queries the persistent database for the content.
-func (db *Database) Node(hash common.Hash) ([]byte, error) {
+func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
 	// fmt.Printf("type of db.diskdb in func Node: %T\n", db.diskdb)
 	// It doesn't make sense to retrieve the metaroot
 	if hash == (common.Hash{}) {
@@ -443,41 +508,90 @@ func (db *Database) Node(hash common.Hash) ([]byte, error) {
 	}
 	memcacheDirtyMissMeter.Mark(1)
 
-	// Content unavailable in memory, fist check the pmem cache
-	// enc := db.pmemCache.Get(hash[:])
-	// if enc == nil {
-	// 	enc = rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+	// try get from pmem before reach the disk
+	if db.pmemCache != nil {
+		pmemGetMeter.Mark(1)
+		if owner == (common.Hash{}) {
+			start := time.Now()
+			pmem_enc, error := db.pmemCache.Get(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))))
+			pmemGetTimer.UpdateSince(start)
+			if error != nil {
+				log.Error("Pmem Get Error!")
+			}
+			if pmem_enc != nil {
+				pmemHitMeter.Mark(1)
+				pmemReadMeter.Mark(int64(len(pmem_enc)))
+				//for correctness test
+				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				// h := newHasher(false)
+				// start := time.Now()
+				// pmem_hash := common.BytesToHash(h.HashRLP(pmem_enc)).Bytes()
+				// hashTimer.UpdateSince(start)
+				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
+					pmemHashInconsistentMeter.Mark(1)
+				} else {
+					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+						pmemErrorMeter.Mark(1)
+						fmt.Println("pmem get errror! 3")
+						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					}
+					// return pmem_enc[common.HashLength:], nil
+				}
+			} else {
+				pmemMissMeter.Mark(1)
+			}
+		} else {
+			start := time.Now()
+			pmem_enc, error := db.pmemCache.Get(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))))
+			pmemGetTimer.UpdateSince(start)
+			if error != nil {
+				log.Error("Pmem Get Error!")
+			}
+			if pmem_enc != nil {
+				pmemHitMeter.Mark(1)
+				pmemReadMeter.Mark(int64(len(pmem_enc)))
+				//for correctness test
+				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				// h := newHasher(false)
+				// start := time.Now()
+				// pmem_hash := common.BytesToHash(h.HashRLP(pmem_enc)).Bytes()
+				// hashTimer.UpdateSince(start)
+				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
+					pmemHashInconsistentMeter.Mark(1)
+				} else {
+					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+						pmemErrorMeter.Mark(1)
+						fmt.Println("pmem get errror! 1")
+						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					}
+					// return pmem_enc[common.HashLength:], nil
+				}
+			} else {
+				pmemMissMeter.Mark(1)
+			}
+		}
+	}
+	// pmemMissMeter.Mark(1)
 
-	// 	memcachePmemMissMeter.Mark(1)
-	// } else {
-	// 	memcachePmemHitMeter.Mark(1)
-	// 	memcachePmemReadMeter.Mark(int64(len(enc)))
-	// }
-
-	// for pmemCache test
-	// enc_p := db.pmemCache.Get(hash[:])
-	// memcachePmemGetMeter.Mark(1)
-	// if _, ok := (db.diskdb).(*rawdb.Nofreezedb); ok {
-	// 	memcacheTestPmemMeter.Mark(1)
-	// }
-	// Content unavailable in memory, attempt to retrieve from disk
 	enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 	if len(enc) != 0 {
-		// if enc_p == nil {
-		// 	db.pmemCache.Put(hash[:], enc)
-		// 	memcachePmemMissMeter.Mark(1)
-		// 	memcachePmemWriteMeter.Mark(int64(len(enc)))
-		// } else {
-		// 	memcachePmemReadMeter.Mark(int64(len(enc)))
-		// 	memcachePmemHitMeter.Mark(1)
-		// 	if !bytes.Equal(enc, enc_p) {
-		// 		memcachePmemErrorMeter2.Mark(1)
-		// 	}
-		// }
 		if db.cleans != nil {
 			db.cleans.Set(hash[:], enc)
 			memcacheCleanMissMeter.Mark(1)
 			memcacheCleanWriteMeter.Mark(int64(len(enc)))
+		}
+		if db.pmemCache != nil {
+			pmemWriteCountMeter.Mark(1)
+			pmemWriteMeter.Mark(int64(len(enc)))
+			if owner == (common.Hash{}) {
+				db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))), append(hash.Bytes(), enc...))
+			} else {
+				db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))), append(hash.Bytes(), enc...))
+			}
 		}
 		return enc, nil
 	}
@@ -869,7 +983,24 @@ func (db *Database) Update(nodes *MergedNodeSet) error {
 		subset := nodes.sets[owner]
 		subset.forEachWithOrder(func(path string, n *memoryNode) {
 			if n.isDeleted() {
+				if db.pmemCache != nil {
+					pmemDeleteMeter.Mark(1)
+					if owner == (common.Hash{}) {
+						db.pmemCache.Delete(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))))
+					} else {
+						db.pmemCache.Delete(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))))
+					}
+				}
 				return // ignore deletion
+			}
+			if db.pmemCache != nil {
+				pmemWriteCountMeter.Mark(1)
+				pmemWriteMeter.Mark(int64(len(n.rlp())))
+				if owner == (common.Hash{}) {
+					db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))), append(n.hash.Bytes(), n.rlp()...))
+				} else {
+					db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))), append(n.hash.Bytes(), n.rlp()...))
+				}
 			}
 			db.insert(n.hash, int(n.size), n.node)
 		})
@@ -925,14 +1056,14 @@ func newHashReader(db *Database) *hashReader {
 
 // Node retrieves the trie node with the given node hash.
 // No error will be returned if the node is not found.
-func (reader *hashReader) Node(_ common.Hash, _ []byte, hash common.Hash) (node, error) {
-	return reader.db.node(hash), nil
+func (reader *hashReader) Node(owner common.Hash, path []byte, hash common.Hash) (node, error) {
+	return reader.db.node(owner, path, hash), nil
 }
 
 // NodeBlob retrieves the RLP-encoded trie node blob with the given node hash.
 // No error will be returned if the node is not found.
-func (reader *hashReader) NodeBlob(_ common.Hash, _ []byte, hash common.Hash) ([]byte, error) {
-	blob, _ := reader.db.Node(hash)
+func (reader *hashReader) NodeBlob(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
+	blob, _ := reader.db.Node(owner, path, hash)
 	return blob, nil
 }
 

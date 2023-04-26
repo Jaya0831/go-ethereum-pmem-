@@ -63,7 +63,8 @@ const (
 type Database struct {
 	fn string      // filename for reporting
 	db *leveldb.DB // LevelDB instance
-	// pmemCache
+
+	//pmem
 	pmemCache *pmem_cache.PmemCache
 
 	compTimeMeter       metrics.Meter // Meter for measuring the total time spent in database compaction
@@ -86,17 +87,9 @@ type Database struct {
 	log log.Logger // Contextual logger tracking the database path
 }
 
-var (
-	enterLeveldbNewMeter        = metrics.NewRegisteredMeter("core/rawdb/database/Test/Leveldb_New", nil)
-	enterLeveldbNew2Meter       = metrics.NewRegisteredMeter("core/rawdb/database/Test/Leveldb_New2", nil)
-	enterLeveldbNewCustomMeter  = metrics.NewRegisteredMeter("core/rawdb/database/Test/Leveldb_NewCustom", nil)
-	enterLeveldbNewCustom2Meter = metrics.NewRegisteredMeter("core/rawdb/database/Test/Leveldb_NewCustom2", nil)
-)
-
 // New returns a wrapped LevelDB object. The namespace is the prefix that the
 // metrics reporting should use for surfacing internal stats.
 func New(file string, cache int, handles int, namespace string, readonly bool) (*Database, error) {
-	enterLeveldbNewMeter.Mark(1)
 	leveldb, err := NewCustom(file, namespace, func(options *opt.Options) {
 		// Ensure we have some minimal caching and file guarantees
 		if cache < minCache {
@@ -113,11 +106,6 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 			options.ReadOnly = true
 		}
 	})
-	var r interface{}
-	r = leveldb
-	if _, ok := r.(ethdb.KeyValueWriterReaderWithPmem); ok {
-		enterLeveldbNew2Meter.Mark(1)
-	}
 	return leveldb, err
 }
 
@@ -125,7 +113,6 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 // metrics reporting should use for surfacing internal stats.
 // The customize function allows the caller to modify the leveldb options.
 func NewCustom(file string, namespace string, customize func(options *opt.Options)) (*Database, error) {
-	enterLeveldbNewCustomMeter.Mark(1)
 	options := configureOptions(customize)
 	logger := log.New("database", file)
 	usedCache := options.GetBlockCacheCapacity() + options.GetWriteBuffer()*2
@@ -143,14 +130,15 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	if err != nil {
 		return nil, err
 	}
-	//TODO: 用config信息定制初始化
-	pcache := pmem_cache.NewPmemcache()
+
+	//pmem
+	pCache := pmem_cache.NewPmemcache()
 	// Assemble the wrapper with all the registered metrics
 	ldb := &Database{
 		fn:        file,
 		db:        db,
-		pmemCache: pcache,
 		log:       logger,
+		pmemCache: pCache,
 		quitChan:  make(chan chan error),
 	}
 	ldb.compTimeMeter = metrics.NewRegisteredMeter(namespace+"compact/time", nil)
@@ -167,11 +155,6 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	ldb.seekCompGauge = metrics.NewRegisteredGauge(namespace+"compact/seek", nil)
 	ldb.manualMemAllocGauge = metrics.NewRegisteredGauge(namespace+"memory/manualalloc", nil)
 
-	var r interface{}
-	r = ldb
-	if _, ok := r.(ethdb.KeyValueWriterReaderWithPmem); ok {
-		enterLeveldbNewCustom2Meter.Mark(1)
-	}
 	// Start up the metrics gathering and return
 	go ldb.meter(metricsGatheringInterval)
 	return ldb, nil
@@ -205,7 +188,7 @@ func (db *Database) Close() error {
 		}
 		db.quitChan = nil
 	}
-	//TODO: error msg
+	// pmem
 	db.pmemCache.Close()
 	return db.db.Close()
 }
@@ -238,20 +221,16 @@ func (db *Database) Delete(key []byte) error {
 // database until a final write is called.
 func (db *Database) NewBatch() ethdb.Batch {
 	return &LeveldbBatch{
-		IsTrieData: false,
-		db:         db.db,
-		b:          new(leveldb.Batch),
-		Diskdb:     db,
+		db: db.db,
+		b:  new(leveldb.Batch),
 	}
 }
 
 // NewBatchWithSize creates a write-only database batch with pre-allocated buffer.
 func (db *Database) NewBatchWithSize(size int) ethdb.Batch {
 	return &LeveldbBatch{
-		IsTrieData: false,
-		db:         db.db,
-		b:          leveldb.MakeBatch(size),
-		Diskdb:     db,
+		db: db.db,
+		b:  leveldb.MakeBatch(size),
 	}
 }
 
@@ -294,23 +273,6 @@ func (db *Database) Compact(start []byte, limit []byte) error {
 // Path returns the path to the database directory.
 func (db *Database) Path() string {
 	return db.fn
-}
-
-// pmem_cache
-func (db *Database) Pmem_Has(key []byte) (bool, error) {
-	return db.pmemCache.Has(key)
-}
-
-func (db *Database) Pmem_Get(key []byte) ([]byte, error) {
-	return db.pmemCache.Get(key)
-}
-
-func (db *Database) Pmem_Put(key []byte, value []byte) error {
-	return db.pmemCache.Put(key, value)
-}
-
-func (db *Database) Pmem_Delete(key []byte) error {
-	return db.pmemCache.Delete(key)
 }
 
 // meter periodically retrieves internal leveldb counters and reports them to
@@ -520,11 +482,9 @@ func (db *Database) meter(refresh time.Duration) {
 // batch is a write-only leveldb batch that commits changes to its host database
 // when Write is called. A batch cannot be used concurrently.
 type LeveldbBatch struct {
-	IsTrieData bool
-	db         *leveldb.DB
-	b          *leveldb.Batch
-	size       int
-	Diskdb     *Database
+	db   *leveldb.DB
+	b    *leveldb.Batch
+	size int
 }
 
 // Put inserts the given value into the batch for later committing.
@@ -548,25 +508,6 @@ func (b *LeveldbBatch) ValueSize() int {
 
 // Write flushes any accumulated data to disk.
 func (b *LeveldbBatch) Write() error {
-	if b.IsTrieData {
-		var leveldb_err, pmem_err error
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			leveldb_err = b.db.Write(b.b, nil)
-		}()
-		go func() {
-			defer wg.Done()
-			pmem_err = b.Replay(b.Diskdb.pmemCache.NewPmemReplayerWriter())
-		}()
-		wg.Wait()
-		if leveldb_err != nil {
-			return leveldb_err
-		} else {
-			return pmem_err
-		}
-	}
 	return b.db.Write(b.b, nil)
 }
 
