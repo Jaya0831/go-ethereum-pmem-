@@ -157,6 +157,9 @@ type cachedNode struct {
 
 	flushPrev common.Hash // Previous node in the flush-list
 	flushNext common.Hash // Next node in the flush-list
+
+	owner common.Hash // owner of the node
+	path  string      // path of the node
 }
 
 // cachedNodeSize is the raw size of a cachedNode data structure without any
@@ -327,7 +330,7 @@ func NewDatabaseWithConfig(diskdb ethdb.Database, config *Config) *Database {
 // insert inserts a simplified trie node into the memory database.
 // All nodes inserted by this function will be reference tracked
 // and in theory should only used for **trie nodes** insertion.
-func (db *Database) insert(hash common.Hash, size int, node node) {
+func (db *Database) insert(hash common.Hash, owner common.Hash, path string, size int, node node) {
 	// If the node's already cached, skip
 	if _, ok := db.dirties[hash]; ok {
 		return
@@ -339,6 +342,8 @@ func (db *Database) insert(hash common.Hash, size int, node node) {
 		node:      node,
 		size:      uint16(size),
 		flushPrev: db.newest,
+		owner:     owner,
+		path:      path,
 	}
 	entry.forChilds(func(child common.Hash) {
 		if c := db.dirties[child]; c != nil {
@@ -403,10 +408,6 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
 				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
-				// h := newHasher(false)
-				// start := time.Now()
-				// pmem_hash := common.BytesToHash(h.HashRLP(pmem_enc)).Bytes()
-				// hashTimer.UpdateSince(start)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
@@ -432,10 +433,6 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
 				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
-				// h := newHasher(false)
-				// start := time.Now()
-				// pmem_hash := common.BytesToHash(h.HashRLP(pmem_enc)).Bytes()
-				// hashTimer.UpdateSince(start)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
@@ -519,10 +516,6 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
 				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
-				// h := newHasher(false)
-				// start := time.Now()
-				// pmem_hash := common.BytesToHash(h.HashRLP(pmem_enc)).Bytes()
-				// hashTimer.UpdateSince(start)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
@@ -548,10 +541,6 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
 				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
-				// h := newHasher(false)
-				// start := time.Now()
-				// pmem_hash := common.BytesToHash(h.HashRLP(pmem_enc)).Bytes()
-				// hashTimer.UpdateSince(start)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
@@ -744,10 +733,19 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	for size > limit && oldest != (common.Hash{}) {
 		// Fetch the oldest referenced node and push into the batch
 		node := db.dirties[oldest]
-		rawdb.WriteLegacyTrieNode(batch, oldest, node.rlp())
-		// // Also write back to pmemcache
-		// db.pmemCache.Put(oldest[:], node.rlp())
-		// memcachePmemWriteMeter.Mark(int64(len(node.rlp())))
+		enc := node.rlp()
+
+		// Write to pmem
+		if db.pmemCache != nil {
+			pmemWriteCountMeter.Mark(1)
+			pmemWriteMeter.Mark(int64(len(enc)))
+			if node.owner == (common.Hash{}) {
+				db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(node.path))), append(oldest.Bytes(), enc...))
+			} else {
+				db.pmemCache.Put(rawdb.StorageTrieNodeKey(node.owner, keybytesToHex([]byte(node.path))), append(oldest.Bytes(), enc...))
+			}
+		}
+		rawdb.WriteLegacyTrieNode(batch, oldest, enc)
 
 		// If we exceeded the ideal batch size, commit and reset
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
@@ -879,8 +877,18 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 		return err
 	}
 	// If we've reached an optimal batch size, commit and start over
-	// enc := node.rlp()
-	rawdb.WriteLegacyTrieNode(batch, hash, node.rlp())
+	enc := node.rlp()
+	// Write to pmem
+	if db.pmemCache != nil {
+		pmemWriteCountMeter.Mark(1)
+		pmemWriteMeter.Mark(int64(len(enc)))
+		if node.owner == (common.Hash{}) {
+			db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(node.path))), append(hash.Bytes(), enc...))
+		} else {
+			db.pmemCache.Put(rawdb.StorageTrieNodeKey(node.owner, keybytesToHex([]byte(node.path))), append(hash.Bytes(), enc...))
+		}
+	}
+	rawdb.WriteLegacyTrieNode(batch, hash, enc)
 	if batch.ValueSize() >= ethdb.IdealBatchSize {
 		if err := batch.Write(); err != nil {
 			return err
@@ -893,10 +901,6 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 			return err
 		}
 	}
-	// // Also write back to pmemcache
-	// db.pmemCache.Put(hash[:], enc)
-	// memcachePmemMissMeter.Mark(1)
-	// memcachePmemWriteMeter.Mark(int64(len(enc)))
 	return nil
 }
 
@@ -975,26 +979,26 @@ func (db *Database) Update(nodes *MergedNodeSet) error {
 		subset := nodes.sets[owner]
 		subset.forEachWithOrder(func(path string, n *memoryNode) {
 			if n.isDeleted() {
-				if db.pmemCache != nil {
-					pmemDeleteMeter.Mark(1)
-					if owner == (common.Hash{}) {
-						db.pmemCache.Delete(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))))
-					} else {
-						db.pmemCache.Delete(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))))
-					}
-				}
+				// if db.pmemCache != nil {
+				// 	pmemDeleteMeter.Mark(1)
+				// 	if owner == (common.Hash{}) {
+				// 		db.pmemCache.Delete(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))))
+				// 	} else {
+				// 		db.pmemCache.Delete(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))))
+				// 	}
+				// }
 				return // ignore deletion
 			}
-			if db.pmemCache != nil {
-				pmemWriteCountMeter.Mark(1)
-				pmemWriteMeter.Mark(int64(len(n.rlp())))
-				if owner == (common.Hash{}) {
-					db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))), append(n.hash.Bytes(), n.rlp()...))
-				} else {
-					db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))), append(n.hash.Bytes(), n.rlp()...))
-				}
-			}
-			db.insert(n.hash, int(n.size), n.node)
+			// if db.pmemCache != nil {
+			// 	pmemWriteCountMeter.Mark(1)
+			// 	pmemWriteMeter.Mark(int64(len(n.rlp())))
+			// 	if owner == (common.Hash{}) {
+			// 		db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))), append(n.hash.Bytes(), n.rlp()...))
+			// 	} else {
+			// 		db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))), append(n.hash.Bytes(), n.rlp()...))
+			// 	}
+			// }
+			db.insert(n.hash, owner, path, int(n.size), n.node)
 		})
 	}
 	// Link up the account trie and storage trie if the node points
