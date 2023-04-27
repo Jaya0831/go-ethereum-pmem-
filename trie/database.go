@@ -398,7 +398,7 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 		pmemGetMeter.Mark(1)
 		if owner == (common.Hash{}) {
 			start := time.Now()
-			pmem_enc, error := db.pmemCache.Get(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))))
+			pmem_enc, error := db.pmemCache.Get(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))))
 			pmemGetTimer.UpdateSince(start)
 			if error != nil {
 				log.Error("Pmem Get Error!")
@@ -407,23 +407,23 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 				pmemHitMeter.Mark(1)
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
-				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
-					// if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
-					// 	pmemErrorMeter.Mark(1)
-					// 	fmt.Println("pmem get errror! 1")
-					// 	fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
-					// 		"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
-					// 	fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
-					// }
+					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+						pmemErrorMeter.Mark(1)
+						fmt.Println("pmem get errror! 1")
+						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					}
 					return mustDecodeNodeUnsafe(hash[:], pmem_enc[common.HashLength:])
 				}
 			}
 		} else {
 			start := time.Now()
-			pmem_enc, error := db.pmemCache.Get(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))))
+			pmem_enc, error := db.pmemCache.Get(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))))
 			pmemGetTimer.UpdateSince(start)
 			if error != nil {
 				log.Error("Pmem Get Error!")
@@ -432,17 +432,17 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 				pmemHitMeter.Mark(1)
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
-				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
-					// if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
-					// 	pmemErrorMeter.Mark(1)
-					// 	fmt.Println("pmem get errror! 2")
-					// 	fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
-					// 		"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
-					// 	fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
-					// }
+					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+						pmemErrorMeter.Mark(1)
+						fmt.Println("pmem get errror! 2")
+						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					}
 					return mustDecodeNodeUnsafe(hash[:], pmem_enc[common.HashLength:])
 				}
 			}
@@ -463,9 +463,9 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 		pmemWriteCountMeter.Mark(1)
 		pmemWriteMeter.Mark(int64(len(enc)))
 		if owner == (common.Hash{}) {
-			db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))), append(hash.Bytes(), enc...))
+			db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...))
 		} else {
-			db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))), append(hash.Bytes(), enc...))
+			db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...))
 		}
 	}
 	// The returned value from database is in its own copy,
@@ -506,7 +506,7 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 		pmemGetMeter.Mark(1)
 		if owner == (common.Hash{}) {
 			start := time.Now()
-			pmem_enc, error := db.pmemCache.Get(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))))
+			pmem_enc, error := db.pmemCache.Get(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))))
 			pmemGetTimer.UpdateSince(start)
 			if error != nil {
 				log.Error("Pmem Get Error!")
@@ -515,23 +515,23 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 				pmemHitMeter.Mark(1)
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
-				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
-					// if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
-					// 	pmemErrorMeter.Mark(1)
-					// 	fmt.Println("pmem get errror! 3")
-					// 	fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
-					// 		"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
-					// 	fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
-					// }
+					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+						pmemErrorMeter.Mark(1)
+						fmt.Println("pmem get errror! 3")
+						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					}
 					return pmem_enc[common.HashLength:], nil
 				}
 			}
 		} else {
 			start := time.Now()
-			pmem_enc, error := db.pmemCache.Get(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))))
+			pmem_enc, error := db.pmemCache.Get(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))))
 			pmemGetTimer.UpdateSince(start)
 			if error != nil {
 				log.Error("Pmem Get Error!")
@@ -540,17 +540,17 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 				pmemHitMeter.Mark(1)
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
-				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
-					// if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
-					// 	pmemErrorMeter.Mark(1)
-					// 	fmt.Println("pmem get errror! 1")
-					// 	fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
-					// 		"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
-					// 	fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
-					// }
+					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+						pmemErrorMeter.Mark(1)
+						fmt.Println("pmem get errror! 1")
+						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					}
 					return pmem_enc[common.HashLength:], nil
 				}
 			}
@@ -569,9 +569,9 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 			pmemWriteCountMeter.Mark(1)
 			pmemWriteMeter.Mark(int64(len(enc)))
 			if owner == (common.Hash{}) {
-				db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(path))), append(hash.Bytes(), enc...))
+				db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...))
 			} else {
-				db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, keybytesToHex([]byte(path))), append(hash.Bytes(), enc...))
+				db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...))
 			}
 		}
 		return enc, nil
@@ -740,9 +740,9 @@ func (db *Database) Cap(limit common.StorageSize) error {
 			pmemWriteCountMeter.Mark(1)
 			pmemWriteMeter.Mark(int64(len(enc)))
 			if node.owner == (common.Hash{}) {
-				db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(node.path))), append(oldest.Bytes(), enc...))
+				db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(node.path)))), append(oldest.Bytes(), enc...))
 			} else {
-				db.pmemCache.Put(rawdb.StorageTrieNodeKey(node.owner, keybytesToHex([]byte(node.path))), append(oldest.Bytes(), enc...))
+				db.pmemCache.Put(rawdb.StorageTrieNodeKey(node.owner, hexToCompact(keybytesToHex([]byte(node.path)))), append(oldest.Bytes(), enc...))
 			}
 		}
 		rawdb.WriteLegacyTrieNode(batch, oldest, enc)
@@ -883,9 +883,9 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 		pmemWriteCountMeter.Mark(1)
 		pmemWriteMeter.Mark(int64(len(enc)))
 		if node.owner == (common.Hash{}) {
-			db.pmemCache.Put(rawdb.AccountTrieNodeKey(keybytesToHex([]byte(node.path))), append(hash.Bytes(), enc...))
+			db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(node.path)))), append(hash.Bytes(), enc...))
 		} else {
-			db.pmemCache.Put(rawdb.StorageTrieNodeKey(node.owner, keybytesToHex([]byte(node.path))), append(hash.Bytes(), enc...))
+			db.pmemCache.Put(rawdb.StorageTrieNodeKey(node.owner, hexToCompact(keybytesToHex([]byte(node.path)))), append(hash.Bytes(), enc...))
 		}
 	}
 	rawdb.WriteLegacyTrieNode(batch, hash, enc)
