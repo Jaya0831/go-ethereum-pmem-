@@ -63,12 +63,9 @@ var (
 
 var (
 	// pmemCache metrics
-	pmemHitMeter        = metrics.NewRegisteredMeter("trie/database/pmem/hit", nil)
-	pmemMissMeter       = metrics.NewRegisteredMeter("trie/database/pmem/miss", nil)
-	pmemReadMeter       = metrics.NewRegisteredMeter("trie/database/pmem/read", nil)
-	pmemWriteMeter      = metrics.NewRegisteredMeter("trie/database/pmem/write", nil)
-	pmemDeleteMeter     = metrics.NewRegisteredMeter("trie/database/pmem/delete", nil)
-	pmemWriteCountMeter = metrics.NewRegisteredMeter("trie/database/pmem/write_count", nil)
+	pmemHitMeter  = metrics.NewRegisteredMeter("trie/database/pmem/hit", nil)
+	pmemMissMeter = metrics.NewRegisteredMeter("trie/database/pmem/miss", nil)
+	pmemReadMeter = metrics.NewRegisteredMeter("trie/database/pmem/read", nil)
 	// for pmemCache test
 	pmemErrorMeter            = metrics.NewRegisteredMeter("trie/database/pmem/error", nil)
 	pmemHashInconsistentMeter = metrics.NewRegisteredMeter("trie/database/pmem/hash_inconsistent", nil)
@@ -407,17 +404,17 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 				pmemHitMeter.Mark(1)
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
-				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
-					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
-						pmemErrorMeter.Mark(1)
-						fmt.Println("pmem get errror! 1")
-						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
-							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
-						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
-					}
+					// if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+					// 	pmemErrorMeter.Mark(1)
+					// 	fmt.Println("pmem get errror! 1")
+					// 	fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+					// 		"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+					// 	fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					// }
 					return mustDecodeNodeUnsafe(hash[:], pmem_enc[common.HashLength:])
 				}
 			}
@@ -432,17 +429,17 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 				pmemHitMeter.Mark(1)
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
-				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
-					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
-						pmemErrorMeter.Mark(1)
-						fmt.Println("pmem get errror! 2")
-						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
-							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
-						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
-					}
+					// if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+					// 	pmemErrorMeter.Mark(1)
+					// 	fmt.Println("pmem get errror! 2")
+					// 	fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+					// 		"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+					// 	fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					// }
 					return mustDecodeNodeUnsafe(hash[:], pmem_enc[common.HashLength:])
 				}
 			}
@@ -460,8 +457,6 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 		memcacheCleanWriteMeter.Mark(int64(len(enc)))
 	}
 	if db.pmemCache != nil {
-		pmemWriteCountMeter.Mark(1)
-		pmemWriteMeter.Mark(int64(len(enc)))
 		if owner == (common.Hash{}) {
 			db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...))
 		} else {
@@ -515,17 +510,17 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 				pmemHitMeter.Mark(1)
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
-				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
-					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
-						pmemErrorMeter.Mark(1)
-						fmt.Println("pmem get errror! 3")
-						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
-							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
-						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
-					}
+					// if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+					// 	pmemErrorMeter.Mark(1)
+					// 	fmt.Println("pmem get errror! 3")
+					// 	fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+					// 		"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+					// 	fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					// }
 					return pmem_enc[common.HashLength:], nil
 				}
 			}
@@ -540,17 +535,17 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 				pmemHitMeter.Mark(1)
 				pmemReadMeter.Mark(int64(len(pmem_enc)))
 				//for correctness test
-				test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+				// test_enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 				if !bytes.Equal(pmem_enc[:common.HashLength], hash[:]) {
 					pmemHashInconsistentMeter.Mark(1)
 				} else {
-					if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
-						pmemErrorMeter.Mark(1)
-						fmt.Println("pmem get errror! 1")
-						fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
-							"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
-						fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
-					}
+					// if !bytes.Equal(pmem_enc[common.HashLength:], test_enc) {
+					// 	pmemErrorMeter.Mark(1)
+					// 	fmt.Println("pmem get errror! 4")
+					// 	fmt.Println("len(pmem_enc[common.HashLength:]): ", len(pmem_enc[common.HashLength:]), "cap(pmem_enc[common.HashLength:]): ", cap(pmem_enc[common.HashLength:]),
+					// 		"\npmem_enc[common.HashLength:]: ", pmem_enc[common.HashLength:])
+					// 	fmt.Println("len(test_enc): ", len(test_enc), "cap(test_enc): ", cap(test_enc), "test_enc: ", test_enc)
+					// }
 					return pmem_enc[common.HashLength:], nil
 				}
 			}
@@ -566,8 +561,6 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 			memcacheCleanWriteMeter.Mark(int64(len(enc)))
 		}
 		if db.pmemCache != nil {
-			pmemWriteCountMeter.Mark(1)
-			pmemWriteMeter.Mark(int64(len(enc)))
 			if owner == (common.Hash{}) {
 				db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...))
 			} else {
@@ -714,7 +707,11 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	// by only uncaching existing data when the database write finalizes.
 	nodes, storage, start := len(db.dirties), db.dirtiesSize, time.Now()
 	batch := db.diskdb.NewBatch()
-
+	// pmem
+	var pmem_batch *pmem_cache.PmemBatch
+	if db.pmemCache != nil {
+		pmem_batch = db.pmemCache.NewPmemBatch()
+	}
 	// db.dirtiesSize only contains the useful data in the cache, but when reporting
 	// the total memory consumption, the maintenance metadata is also needed to be
 	// counted.
@@ -737,12 +734,12 @@ func (db *Database) Cap(limit common.StorageSize) error {
 
 		// Write to pmem
 		if db.pmemCache != nil {
-			pmemWriteCountMeter.Mark(1)
-			pmemWriteMeter.Mark(int64(len(enc)))
 			if node.owner == (common.Hash{}) {
-				db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(node.path)))), append(oldest.Bytes(), enc...))
+				pmem_batch.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(node.path)))), append(oldest.Bytes(), enc...))
+				// db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(node.path)))), append(oldest.Bytes(), enc...))
 			} else {
-				db.pmemCache.Put(rawdb.StorageTrieNodeKey(node.owner, hexToCompact(keybytesToHex([]byte(node.path)))), append(oldest.Bytes(), enc...))
+				pmem_batch.Put(rawdb.StorageTrieNodeKey(node.owner, hexToCompact(keybytesToHex([]byte(node.path)))), append(oldest.Bytes(), enc...))
+				// db.pmemCache.Put(rawdb.StorageTrieNodeKey(node.owner, hexToCompact(keybytesToHex([]byte(node.path)))), append(oldest.Bytes(), enc...))
 			}
 		}
 		rawdb.WriteLegacyTrieNode(batch, oldest, enc)
@@ -755,6 +752,17 @@ func (db *Database) Cap(limit common.StorageSize) error {
 			}
 			batch.Reset()
 		}
+		// pmem
+		if db.pmemCache != nil {
+			if pmem_batch.ValueSize() >= pmem_cache.IdealBatchSize {
+				if err := pmem_batch.Write(); err != nil {
+					log.Error("Failed to write flush list to pmem")
+					return err
+				}
+				pmem_batch.Reset()
+			}
+		}
+
 		// Iterate to the next flush item, or abort if the size cap was achieved. Size
 		// is the total size, including the useful cached data (hash -> blob), the
 		// cache item metadata, as well as external children mappings.
@@ -768,6 +776,13 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	if err := batch.Write(); err != nil {
 		log.Error("Failed to write flush list to disk", "err", err)
 		return err
+	}
+	// pmem
+	if db.pmemCache != nil {
+		if err := pmem_batch.Write(); err != nil {
+			log.Error("Failed to write flush list to pmem")
+			return err
+		}
 	}
 	// Write successful, clear out the flushed data
 	db.lock.Lock()
@@ -813,6 +828,11 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 	// by only uncaching existing data when the database write finalizes.
 	start := time.Now()
 	batch := db.diskdb.NewBatch()
+	//pmem
+	var pmem_batch *pmem_cache.PmemBatch
+	if db.pmemCache != nil {
+		pmem_batch = db.pmemCache.NewPmemBatch()
+	}
 
 	// Move all of the accumulated preimages into a write batch
 	if db.preimages != nil {
@@ -824,7 +844,7 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 	nodes, storage := len(db.dirties), db.dirtiesSize
 
 	uncacher := &cleaner{db}
-	if err := db.commit(node, batch, uncacher); err != nil {
+	if err := db.commit(node, batch, pmem_batch, uncacher); err != nil {
 		log.Error("Failed to commit trie from trie database", "err", err)
 		return err
 	}
@@ -833,6 +853,15 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 		log.Error("Failed to write trie to disk", "err", err)
 		return err
 	}
+	// pmem
+	if db.pmemCache != nil {
+		if err := pmem_batch.Write(); err != nil {
+			log.Error("Failed to write flush list to pmem")
+			return err
+		}
+		pmem_batch.Reset()
+	}
+
 	// Uncache any leftovers in the last batch
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -861,7 +890,7 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 }
 
 // commit is the private locked version of Commit.
-func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleaner) error {
+func (db *Database) commit(hash common.Hash, batch ethdb.Batch, pmem_batch *pmem_cache.PmemBatch, uncacher *cleaner) error {
 	// If the node does not exist, it's a previously committed node
 	node, ok := db.dirties[hash]
 	if !ok {
@@ -870,7 +899,7 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 	var err error
 	node.forChilds(func(child common.Hash) {
 		if err == nil {
-			err = db.commit(child, batch, uncacher)
+			err = db.commit(child, batch, pmem_batch, uncacher)
 		}
 	})
 	if err != nil {
@@ -880,8 +909,6 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 	enc := node.rlp()
 	// Write to pmem
 	if db.pmemCache != nil {
-		pmemWriteCountMeter.Mark(1)
-		pmemWriteMeter.Mark(int64(len(enc)))
 		if node.owner == (common.Hash{}) {
 			db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(node.path)))), append(hash.Bytes(), enc...))
 		} else {
@@ -889,6 +916,17 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 		}
 	}
 	rawdb.WriteLegacyTrieNode(batch, hash, enc)
+	// pmem
+	if db.pmemCache != nil {
+		if pmem_batch.ValueSize() >= pmem_cache.IdealBatchSize {
+			if err := pmem_batch.Write(); err != nil {
+				log.Error("Failed to write flush list to pmem")
+				return err
+			}
+			pmem_batch.Reset()
+		}
+	}
+
 	if batch.ValueSize() >= ethdb.IdealBatchSize {
 		if err := batch.Write(); err != nil {
 			return err

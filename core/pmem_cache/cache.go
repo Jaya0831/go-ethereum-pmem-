@@ -9,16 +9,12 @@ import "C"
 import (
 	"fmt"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 )
-
-type PmemCache struct {
-	cache         *C.VMEMcache
-	pmemWriteLock *sync.Mutex
-}
 
 type PmemError struct {
 	msg string
@@ -31,8 +27,30 @@ func (pmemError *PmemError) Error() string {
 	return pmemError.msg
 }
 
-var pmemCacheCurrent *PmemCache = nil
-var currentLock sync.Mutex
+var (
+	pmemCacheCurrent *PmemCache = nil
+	currentLock      sync.Mutex
+
+	// metrics
+	pmemNewMeter        = metrics.NewRegisteredMeter("core/pmem_cache/new", nil)
+	pmemCloseMeter      = metrics.NewRegisteredMeter("core/pmem_cache/close", nil)
+	pmemPutError        = metrics.NewRegisteredMeter("core/pmem_cache/put_error", nil)
+	pmemPutInconsistent = metrics.NewRegisteredMeter("core/pmem_cache/put_inconsistent", nil)
+	pmemOnEvict         = metrics.NewRegisteredMeter("core/pmem_cache/on_evict", nil)
+	pmemWriteKVMeter    = metrics.NewRegisteredMeter("core/pmem_cache/writeKV", nil)
+	pmemDeleteMeter     = metrics.NewRegisteredMeter("core/pmem_cache/delete", nil)
+	// pmemUpdateMeter     = metrics.NewRegisteredMeter("core/pmem_cache/update", nil)
+	pmemWriteCountMeter = metrics.NewRegisteredMeter("core/pmem_cache/write_count", nil)
+
+	pmemBatchWriteTimer       = metrics.NewRegisteredTimer("core/pmem_cache/batch_write", nil)
+	pmemBatchWriteStartMeter  = metrics.NewRegisteredMeter("core/pmem_cache/batch_write_start", nil)
+	pmemBatchWriteFinishMeter = metrics.NewRegisteredMeter("core/pmem_cache/batch_write_finish", nil)
+)
+
+type PmemCache struct {
+	cache         *C.VMEMcache
+	pmemWriteLock *sync.Mutex
+}
 
 func registerPmemCache(pmemCache *PmemCache) error {
 	currentLock.Lock()
@@ -43,14 +61,6 @@ func registerPmemCache(pmemCache *PmemCache) error {
 	pmemCacheCurrent = pmemCache
 	return nil
 }
-
-var (
-	pmemNewMeter        = metrics.NewRegisteredMeter("core/pmem_cache/new", nil)
-	pmemCloseMeter      = metrics.NewRegisteredMeter("core/pmem_cache/close", nil)
-	pmemPutError        = metrics.NewRegisteredMeter("core/pmem_cache/put_error", nil)
-	pmemPutInconsistent = metrics.NewRegisteredMeter("core/pmem_cache/put_inconsistent", nil)
-	pmemOnEvict         = metrics.NewRegisteredMeter("core/pmem_cache/on_evict", nil)
-)
 
 func GetPmemCache() *PmemCache {
 	return pmemCacheCurrent
@@ -103,6 +113,11 @@ func on_evict(cache *C.VMEMcache, key unsafe.Pointer, k_size C.ulong, args unsaf
 	pmemOnEvict.Mark(1)
 }
 
+// TODO: error is always nil
+func (pmemCache *PmemCache) Get(key []byte) ([]byte, error) {
+	return get(pmemCache.cache, key), nil
+}
+
 func get(cache *C.VMEMcache, key []byte) []byte {
 	// fmt.Println("get.key: ", key)
 	key_c := C.CBytes(key)
@@ -117,16 +132,6 @@ func get(cache *C.VMEMcache, key []byte) []byte {
 	return value
 }
 
-// TODO: error is always nil
-func (pmemCache *PmemCache) Get(key []byte) ([]byte, error) {
-	return get(pmemCache.cache, key), nil
-}
-
-var (
-	pmemUpdateMeter     = metrics.NewRegisteredMeter("core/pmem_cache/update", nil)
-	pmemWriteCountMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem_write_count", nil)
-)
-
 func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
 	// test Update
 	// pmemWriteCountMeter.Mark(1)
@@ -134,9 +139,10 @@ func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
 	// 	pmemUpdateMeter.Mark(1)
 	// 	fmt.Println("PmemCache Update!")
 	// }
-
 	pmemCache.pmemWriteLock.Lock()
 	defer pmemCache.pmemWriteLock.Unlock()
+	pmemWriteCountMeter.Mark(1)
+	pmemWriteKVMeter.Mark(int64(len(key) + len(value)))
 	// fmt.Println("put.key: ", key)
 	// fmt.Println("put.value: ", value)
 	key_c := C.CBytes(key)
@@ -168,6 +174,7 @@ func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
 func (pmemCache *PmemCache) Delete(key []byte) error {
 	pmemCache.pmemWriteLock.Lock()
 	defer pmemCache.pmemWriteLock.Unlock()
+	pmemDeleteMeter.Mark(1)
 	key_c := C.CBytes(key)
 	defer C.free(key_c)
 	tmp := int(C.wrapper_vmemcache_evict(pmemCache.cache, key_c, C.ulong(len(key))))
@@ -207,4 +214,59 @@ func (replayer *PmemReplayerWriter) Put(key, value []byte) error {
 
 func (replayer *PmemReplayerWriter) Delete(key []byte) error {
 	return replayer.pmemWriter.Delete(key)
+}
+
+const IdealBatchSize = 100 * 1024
+
+type PmemBatch struct {
+	batch map[string][]byte
+	pmem  *PmemCache
+	size  int
+}
+
+func (pmemCache *PmemCache) NewPmemBatch() *PmemBatch {
+	return &PmemBatch{
+		batch: make(map[string][]byte),
+		pmem:  pmemCache,
+		size:  0,
+	}
+}
+
+func (b *PmemBatch) Put(key, value []byte) error {
+	old_key, ok := b.batch[string(key)]
+	if ok {
+		// TODO: 写回和数据库时，要把old_key写回到leveldb
+	}
+	b.batch[string(key)] = value
+	b.size += len(key) + len(value) - len(old_key)
+	return nil
+}
+
+func (b *PmemBatch) Delete(key []byte) error {
+	log.Error("(b *PmemBatch) Delete is not implemented")
+	return nil
+}
+
+func (b *PmemBatch) ValueSize() int {
+	return b.size
+}
+
+func write(pmemCache *PmemCache, batch_map map[string][]byte) {
+	pmemBatchWriteStartMeter.Mark(1)
+	start := time.Now()
+	for k, v := range batch_map {
+		pmemCache.Put([]byte(k), v)
+	}
+	pmemBatchWriteTimer.UpdateSince(start)
+	pmemBatchWriteFinishMeter.Mark(1)
+}
+
+func (b *PmemBatch) Write() error {
+	go write(b.pmem, b.batch)
+	return nil
+}
+
+func (b *PmemBatch) Reset() {
+	b.batch = make(map[string][]byte)
+	b.size = 0
 }
