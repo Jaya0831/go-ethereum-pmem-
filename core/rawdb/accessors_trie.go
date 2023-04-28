@@ -142,13 +142,15 @@ func DeleteStorageTrieNode(db ethdb.KeyValueWriter, accountHash common.Hash, pat
 }
 
 var (
-	levelDBGetTimer = metrics.NewRegisteredTimer("core/rawdb/levelDBGetTime", nil)
+	levelDBGetTimer             = metrics.NewRegisteredTimer("core/rawdb/levelDBGetTime", nil)
+	test_callReadLegacyTrieNode = metrics.NewRegisteredMeter("a/callReadLegacyTrieNode", nil)
 )
 
 // ReadLegacyTrieNode retrieves the legacy trie node with the given
 // associated node hash.
 func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
-	// println("ReadLegacyTrieNode")
+	test_callReadLegacyTrieNode.Mark(1)
+	println("ReadLegacyTrieNode")
 	start := time.Now()
 	data, err := db.Get(hash.Bytes())
 	if err != nil || data == nil {

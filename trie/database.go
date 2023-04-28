@@ -395,7 +395,7 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 		pmemGetMeter.Mark(1)
 		if owner == (common.Hash{}) {
 			start := time.Now()
-			pmem_enc, error := db.pmemCache.Get(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))))
+			pmem_enc, error := db.pmemCache.Get(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), hash)
 			pmemGetTimer.UpdateSince(start)
 			if error != nil {
 				log.Error("Pmem Get Error!")
@@ -420,7 +420,7 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 			}
 		} else {
 			start := time.Now()
-			pmem_enc, error := db.pmemCache.Get(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))))
+			pmem_enc, error := db.pmemCache.Get(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))), hash)
 			pmemGetTimer.UpdateSince(start)
 			if error != nil {
 				log.Error("Pmem Get Error!")
@@ -456,13 +456,13 @@ func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node 
 		memcacheCleanMissMeter.Mark(1)
 		memcacheCleanWriteMeter.Mark(int64(len(enc)))
 	}
-	if db.pmemCache != nil {
-		if owner == (common.Hash{}) {
-			db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...))
-		} else {
-			db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...))
-		}
-	}
+	// if db.pmemCache != nil {
+	// 	if owner == (common.Hash{}) {
+	// 		db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...), 0)
+	// 	} else {
+	// 		db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...), 0)
+	// 	}
+	// }
 	// The returned value from database is in its own copy,
 	// safe to use mustDecodeNodeUnsafe for decoding.
 	return mustDecodeNodeUnsafe(hash[:], enc)
@@ -501,7 +501,7 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 		pmemGetMeter.Mark(1)
 		if owner == (common.Hash{}) {
 			start := time.Now()
-			pmem_enc, error := db.pmemCache.Get(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))))
+			pmem_enc, error := db.pmemCache.Get(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), hash)
 			pmemGetTimer.UpdateSince(start)
 			if error != nil {
 				log.Error("Pmem Get Error!")
@@ -526,7 +526,7 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 			}
 		} else {
 			start := time.Now()
-			pmem_enc, error := db.pmemCache.Get(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))))
+			pmem_enc, error := db.pmemCache.Get(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))), hash)
 			pmemGetTimer.UpdateSince(start)
 			if error != nil {
 				log.Error("Pmem Get Error!")
@@ -560,13 +560,13 @@ func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash) ([]by
 			memcacheCleanMissMeter.Mark(1)
 			memcacheCleanWriteMeter.Mark(int64(len(enc)))
 		}
-		if db.pmemCache != nil {
-			if owner == (common.Hash{}) {
-				db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...))
-			} else {
-				db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...))
-			}
-		}
+		// if db.pmemCache != nil {
+		// 	if owner == (common.Hash{}) {
+		// 		db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...), 0)
+		// 	} else {
+		// 		db.pmemCache.Put(rawdb.StorageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), enc...), 0)
+		// 	}
+		// }
 		return enc, nil
 	}
 	return nil, errors.New("not found")
@@ -706,7 +706,7 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	// memory cache during commit but not yet in persistent storage). This is ensured
 	// by only uncaching existing data when the database write finalizes.
 	nodes, storage, start := len(db.dirties), db.dirtiesSize, time.Now()
-	batch := db.diskdb.NewBatch()
+	// batch := db.diskdb.NewBatch()
 	// pmem
 	var pmem_batch *pmem_cache.PmemBatch
 	if db.pmemCache != nil {
@@ -742,16 +742,16 @@ func (db *Database) Cap(limit common.StorageSize) error {
 				// db.pmemCache.Put(rawdb.StorageTrieNodeKey(node.owner, hexToCompact(keybytesToHex([]byte(node.path)))), append(oldest.Bytes(), enc...))
 			}
 		}
-		rawdb.WriteLegacyTrieNode(batch, oldest, enc)
+		// rawdb.WriteLegacyTrieNode(batch, oldest, enc)
 
 		// If we exceeded the ideal batch size, commit and reset
-		if batch.ValueSize() >= ethdb.IdealBatchSize {
-			if err := batch.Write(); err != nil {
-				log.Error("Failed to write flush list to disk", "err", err)
-				return err
-			}
-			batch.Reset()
-		}
+		// if batch.ValueSize() >= ethdb.IdealBatchSize {
+		// if err := batch.Write(); err != nil {
+		// 	log.Error("Failed to write flush list to disk", "err", err)
+		// 	return err
+		// }
+		// batch.Reset()
+		// }
 		// pmem
 		if db.pmemCache != nil {
 			if pmem_batch.ValueSize() >= pmem_cache.IdealBatchSize {
@@ -773,10 +773,10 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		oldest = node.flushNext
 	}
 	// Flush out any remainder data from the last batch
-	if err := batch.Write(); err != nil {
-		log.Error("Failed to write flush list to disk", "err", err)
-		return err
-	}
+	// if err := batch.Write(); err != nil {
+	// 	log.Error("Failed to write flush list to disk", "err", err)
+	// 	return err
+	// }
 	// pmem
 	if db.pmemCache != nil {
 		if err := pmem_batch.Write(); err != nil {
@@ -849,10 +849,10 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 		return err
 	}
 	// Trie mostly committed to disk, flush any batch leftovers
-	if err := batch.Write(); err != nil {
-		log.Error("Failed to write trie to disk", "err", err)
-		return err
-	}
+	// if err := batch.Write(); err != nil {
+	// 	log.Error("Failed to write trie to disk", "err", err)
+	// 	return err
+	// }
 	// pmem
 	if db.pmemCache != nil {
 		if err := pmem_batch.Write(); err != nil {
@@ -910,9 +910,9 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, pmem_batch *pmem
 	// Write to pmem
 	if db.pmemCache != nil {
 		if node.owner == (common.Hash{}) {
-			db.pmemCache.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(node.path)))), append(hash.Bytes(), enc...))
+			pmem_batch.Put(rawdb.AccountTrieNodeKey(hexToCompact(keybytesToHex([]byte(node.path)))), append(hash.Bytes(), enc...))
 		} else {
-			db.pmemCache.Put(rawdb.StorageTrieNodeKey(node.owner, hexToCompact(keybytesToHex([]byte(node.path)))), append(hash.Bytes(), enc...))
+			pmem_batch.Put(rawdb.StorageTrieNodeKey(node.owner, hexToCompact(keybytesToHex([]byte(node.path)))), append(hash.Bytes(), enc...))
 		}
 	}
 	rawdb.WriteLegacyTrieNode(batch, hash, enc)
@@ -928,9 +928,9 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, pmem_batch *pmem
 	}
 
 	if batch.ValueSize() >= ethdb.IdealBatchSize {
-		if err := batch.Write(); err != nil {
-			return err
-		}
+		// if err := batch.Write(); err != nil {
+		// 	return err
+		// }
 		db.lock.Lock()
 		err := batch.Replay(uncacher)
 		batch.Reset()

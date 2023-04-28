@@ -132,7 +132,8 @@ func NewCustom(file string, namespace string, customize func(options *opt.Option
 	}
 
 	//pmem
-	pCache := pmem_cache.NewPmemcache()
+	// FIXME: 这种创建方式不合理，应该是和leveldb并列的，而不是在内部，这样cache结构体只能保存leveldb.DB而不是leveldb.Database
+	pCache := pmem_cache.NewPmemcache(db)
 	// Assemble the wrapper with all the registered metrics
 	ldb := &Database{
 		fn:        file,
