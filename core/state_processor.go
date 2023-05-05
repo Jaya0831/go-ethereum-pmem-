@@ -24,6 +24,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
+	"github.com/ethereum/go-ethereum/core/pmem_cache"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -95,6 +97,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
 		txProcessTimer.UpdateSince(tx_start)
+		if txProcessTimer.Count() == 1000 || txProcessTimer.Count() == 10000 || txProcessTimer.Count()%50000 == 0 {
+			printTxMetric()
+		}
 		// log.Info("tx process end")
 	}
 	// Fail if Shanghai not enabled and len(withdrawals) is non-zero.
@@ -106,6 +111,14 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles(), withdrawals)
 	// log.Info("Process end")
 	return receipts, allLogs, *usedGas, nil
+}
+
+func printTxMetric() {
+	println("Metrics in core/state_processor.go:")
+	println("	core/state_process/tx_process.Count: ", txProcessTimer.Count())
+	println("	core/state_process/tx_process.Mean: ", txProcessTimer.Mean())
+	rawdb.PrintMetric()
+	pmem_cache.PrintMetric()
 }
 
 func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (*types.Receipt, error) {

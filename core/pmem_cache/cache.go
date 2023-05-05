@@ -7,6 +7,7 @@ package pmem_cache
 //extern void on_evict(VMEMcache*, void*, size_t, void*);
 import "C"
 import (
+	"fmt"
 	"sync"
 	"time"
 	"unsafe"
@@ -77,7 +78,7 @@ func NewPmemcache() *PmemCache {
 	path := "/mnt/pmem0/ljy/test"
 	path_c := C.CString(path)
 	defer C.free(unsafe.Pointer(path_c))
-	cache_size := int64(1024 * 1024 * 128 * 1) //1GB
+	cache_size := int64(1024 * 1024 * 64 * 1) //1GB
 	cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), (*C.vmemcache_on_evict)(C.on_evict))
 	if cache == nil {
 		return nil
@@ -256,4 +257,12 @@ func (b *PmemBatch) Write() error {
 func (b *PmemBatch) Reset() {
 	b.batch = make(map[string][]byte)
 	b.size = 0
+}
+
+func PrintMetric() {
+	fmt.Println("Metrics in core/pmem_cache/cache.go:")
+	fmt.Println("	core/pmem_cache/put_error.Count: ", pmemPutErrorMeter.Count())
+	fmt.Println("	core/pmem_cache/on_evict.Count: ", pmemOnEvictMeter.Count())
+	fmt.Println("	core/pmem_cache/writeKV.Count: ", pmemWriteKVMeter.Count())
+	fmt.Println("	core/pmem_cache/write_count.Count: ", pmemWriteCountMeter.Count())
 }

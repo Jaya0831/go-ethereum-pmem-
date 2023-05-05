@@ -151,7 +151,41 @@ var (
 	levelDBGetTimer = metrics.NewRegisteredTimer("core/rawdb/accessors_trie/levelDB/get_time", nil)
 	getTimer        = metrics.NewRegisteredTimer("core/rawdb/accessors_trie/get_time", nil)
 	getMeter        = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/get", nil)
+
+	// metrics in trie/database.go
+	MemcacheCleanHitMeter   = metrics.NewRegisteredMeter("trie/memcache/clean/hit", nil)
+	MemcacheCleanMissMeter  = metrics.NewRegisteredMeter("trie/memcache/clean/miss", nil)
+	MemcacheCleanReadMeter  = metrics.NewRegisteredMeter("trie/memcache/clean/read", nil)
+	MemcacheCleanWriteMeter = metrics.NewRegisteredMeter("trie/memcache/clean/write", nil)
+
+	MemcacheDirtyHitMeter   = metrics.NewRegisteredMeter("trie/memcache/dirty/hit", nil)
+	MemcacheDirtyMissMeter  = metrics.NewRegisteredMeter("trie/memcache/dirty/miss", nil)
+	MemcacheDirtyReadMeter  = metrics.NewRegisteredMeter("trie/memcache/dirty/read", nil)
+	MemcacheDirtyWriteMeter = metrics.NewRegisteredMeter("trie/memcache/dirty/write", nil)
 )
+
+func PrintMetric() {
+	fmt.Println("Metrics in core/rawdb/accessors_trie.go:")
+	fmt.Println("	core/rawdb/accessors_trie/pmem/hit.Count: ", pmemHitMeter.Count())
+	fmt.Println("	core/rawdb/accessors_trie/pmem/miss.Count: ", pmemMissMeter.Count())
+	fmt.Println("	core/rawdb/accessors_trie/pmem/read.Count: ", pmemReadMeter.Count())
+	fmt.Println("	core/rawdb/accessors_trie/pmem/get_time.Mean: ", pmemGetTimer.Mean())
+	fmt.Println("	core/rawdb/accessors_trie/pmem/get_time.Count: ", pmemGetTimer.Count())
+	fmt.Println("	core/rawdb/accessors_trie/levelDB/get_time.Mean: ", levelDBGetTimer.Mean())
+	fmt.Println("	core/rawdb/accessors_trie/levelDB/get_time.Count: ", levelDBGetTimer.Count())
+	fmt.Println("	core/rawdb/accessors_trie/get_time.Mean: ", getTimer.Mean())
+	fmt.Println("	core/rawdb/accessors_trie/get_time.Count: ", getTimer.Count())
+	fmt.Println("	core/rawdb/accessors_trie/get.Count: ", getMeter.Count())
+	fmt.Println("Metrics in trie/database.go:")
+	fmt.Println("	trie/memcache/clean/hit.Count: ", MemcacheCleanHitMeter.Count())
+	fmt.Println("	trie/memcache/clean/miss.Count: ", MemcacheCleanMissMeter.Count())
+	fmt.Println("	trie/memcache/clean/read.Count: ", MemcacheCleanReadMeter.Count())
+	fmt.Println("	trie/memcache/clean/write.Count: ", MemcacheCleanWriteMeter.Count())
+	fmt.Println("	trie/memcache/dirty/hit.Count: ", MemcacheDirtyHitMeter.Count())
+	fmt.Println("	trie/memcache/dirty/miss.Count: ", MemcacheDirtyMissMeter.Count())
+	fmt.Println("	trie/memcache/dirty/read.Count: ", MemcacheDirtyReadMeter.Count())
+	fmt.Println("	trie/memcache/dirty/write.Count: ", MemcacheDirtyWriteMeter.Count())
+}
 
 // ReadLegacyTrieNode retrieves the legacy trie node with the given
 // associated node hash.

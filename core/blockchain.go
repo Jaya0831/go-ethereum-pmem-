@@ -1528,12 +1528,22 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 		return 0, errChainStopped
 	}
 	defer bc.chainmu.Unlock()
+	pre_count := insertChainMeter.Count()
 	insertChainMeter.Mark(int64(len(chain)))
 	start := time.Now()
 	tmp, err := bc.insertChain(chain, true, true)
 	insertChainTimer.UpdateSince(start)
+	if (pre_count % 50000) > (insertChainMeter.Count() % 50000) {
+		printBlockMetrics()
+	}
 	return tmp, err
+}
 
+func printBlockMetrics() {
+	println("Metrics in core/state_processor.go:")
+	println("	core/state_process/insert_chain.Count: ", insertChainTimer.Count())
+	println("	core/state_process/insert_chain.Mean: ", insertChainTimer.Mean())
+	println("	core/state_process/insert_chain_count.Count: ", insertChainMeter.Count())
 }
 
 // insertChain is the internal implementation of InsertChain, which assumes that

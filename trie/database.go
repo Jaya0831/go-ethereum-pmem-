@@ -36,15 +36,15 @@ import (
 )
 
 var (
-	memcacheCleanHitMeter   = metrics.NewRegisteredMeter("trie/memcache/clean/hit", nil)
-	memcacheCleanMissMeter  = metrics.NewRegisteredMeter("trie/memcache/clean/miss", nil)
-	memcacheCleanReadMeter  = metrics.NewRegisteredMeter("trie/memcache/clean/read", nil)
-	memcacheCleanWriteMeter = metrics.NewRegisteredMeter("trie/memcache/clean/write", nil)
+	// memcacheCleanHitMeter   = metrics.NewRegisteredMeter("trie/memcache/clean/hit", nil)
+	// memcacheCleanMissMeter  = metrics.NewRegisteredMeter("trie/memcache/clean/miss", nil)
+	// memcacheCleanReadMeter  = metrics.NewRegisteredMeter("trie/memcache/clean/read", nil)
+	// memcacheCleanWriteMeter = metrics.NewRegisteredMeter("trie/memcache/clean/write", nil)
 
-	memcacheDirtyHitMeter   = metrics.NewRegisteredMeter("trie/memcache/dirty/hit", nil)
-	memcacheDirtyMissMeter  = metrics.NewRegisteredMeter("trie/memcache/dirty/miss", nil)
-	memcacheDirtyReadMeter  = metrics.NewRegisteredMeter("trie/memcache/dirty/read", nil)
-	memcacheDirtyWriteMeter = metrics.NewRegisteredMeter("trie/memcache/dirty/write", nil)
+	// memcacheDirtyHitMeter   = metrics.NewRegisteredMeter("trie/memcache/dirty/hit", nil)
+	// memcacheDirtyMissMeter  = metrics.NewRegisteredMeter("trie/memcache/dirty/miss", nil)
+	// memcacheDirtyReadMeter  = metrics.NewRegisteredMeter("trie/memcache/dirty/read", nil)
+	// memcacheDirtyWriteMeter = metrics.NewRegisteredMeter("trie/memcache/dirty/write", nil)
 
 	memcacheFlushTimeTimer  = metrics.NewRegisteredResettingTimer("trie/memcache/flush/time", nil)
 	memcacheFlushNodesMeter = metrics.NewRegisteredMeter("trie/memcache/flush/nodes", nil)
@@ -313,7 +313,7 @@ func (db *Database) insert(hash common.Hash, size int, node node) {
 	if _, ok := db.dirties[hash]; ok {
 		return
 	}
-	memcacheDirtyWriteMeter.Mark(int64(size))
+	rawdb.MemcacheDirtyWriteMeter.Mark(int64(size))
 
 	// Create the cached entry for this node
 	entry := &cachedNode{
@@ -344,8 +344,8 @@ func (db *Database) node(hash common.Hash) node {
 	// Retrieve the node from the clean cache if available
 	if db.cleans != nil {
 		if enc := db.cleans.Get(nil, hash[:]); enc != nil {
-			memcacheCleanHitMeter.Mark(1)
-			memcacheCleanReadMeter.Mark(int64(len(enc)))
+			rawdb.MemcacheCleanHitMeter.Mark(1)
+			rawdb.MemcacheCleanReadMeter.Mark(int64(len(enc)))
 
 			// The returned value from cache is in its own copy,
 			// safe to use mustDecodeNodeUnsafe for decoding.
@@ -358,11 +358,11 @@ func (db *Database) node(hash common.Hash) node {
 	db.lock.RUnlock()
 
 	if dirty != nil {
-		memcacheDirtyHitMeter.Mark(1)
-		memcacheDirtyReadMeter.Mark(int64(dirty.size))
+		rawdb.MemcacheDirtyHitMeter.Mark(1)
+		rawdb.MemcacheDirtyReadMeter.Mark(int64(dirty.size))
 		return dirty.obj(hash)
 	}
-	memcacheDirtyMissMeter.Mark(1)
+	rawdb.MemcacheDirtyMissMeter.Mark(1)
 
 	// enc_p := db.pmemCache.Get(hash[:])
 	// memcachePmemGetMeter.Mark(1)
@@ -389,8 +389,8 @@ func (db *Database) node(hash common.Hash) node {
 	// }
 	if db.cleans != nil {
 		db.cleans.Set(hash[:], enc)
-		memcacheCleanMissMeter.Mark(1)
-		memcacheCleanWriteMeter.Mark(int64(len(enc)))
+		rawdb.MemcacheCleanMissMeter.Mark(1)
+		rawdb.MemcacheCleanWriteMeter.Mark(int64(len(enc)))
 	}
 	// The returned value from database is in its own copy,
 	// safe to use mustDecodeNodeUnsafe for decoding.
@@ -407,8 +407,8 @@ func (db *Database) Node(hash common.Hash) ([]byte, error) {
 	// Retrieve the node from the clean cache if available
 	if db.cleans != nil {
 		if enc := db.cleans.Get(nil, hash[:]); enc != nil {
-			memcacheCleanHitMeter.Mark(1)
-			memcacheCleanReadMeter.Mark(int64(len(enc)))
+			rawdb.MemcacheCleanHitMeter.Mark(1)
+			rawdb.MemcacheCleanReadMeter.Mark(int64(len(enc)))
 			return enc, nil
 		}
 	}
@@ -418,19 +418,19 @@ func (db *Database) Node(hash common.Hash) ([]byte, error) {
 	db.lock.RUnlock()
 
 	if dirty != nil {
-		memcacheDirtyHitMeter.Mark(1)
-		memcacheDirtyReadMeter.Mark(int64(dirty.size))
+		rawdb.MemcacheDirtyHitMeter.Mark(1)
+		rawdb.MemcacheDirtyReadMeter.Mark(int64(dirty.size))
 		return dirty.rlp(), nil
 	}
-	memcacheDirtyMissMeter.Mark(1)
+	rawdb.MemcacheDirtyMissMeter.Mark(1)
 
 	// Content unavailable in memory, attempt to retrieve from disk
 	enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
 	if len(enc) != 0 {
 		if db.cleans != nil {
 			db.cleans.Set(hash[:], enc)
-			memcacheCleanMissMeter.Mark(1)
-			memcacheCleanWriteMeter.Mark(int64(len(enc)))
+			rawdb.MemcacheCleanMissMeter.Mark(1)
+			rawdb.MemcacheCleanWriteMeter.Mark(int64(len(enc)))
 		}
 		return enc, nil
 	}
@@ -787,7 +787,7 @@ func (c *cleaner) Put(key []byte, rlp []byte) error {
 	// Move the flushed node into the clean cache to prevent insta-reloads
 	if c.db.cleans != nil {
 		c.db.cleans.Set(hash[:], rlp)
-		memcacheCleanWriteMeter.Mark(int64(len(rlp)))
+		rawdb.MemcacheCleanWriteMeter.Mark(int64(len(rlp)))
 	}
 	return nil
 }
