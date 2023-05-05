@@ -1554,10 +1554,7 @@ func (d *Downloader) processFullSyncContent(ttd *big.Int, beaconMode bool) error
 	}
 }
 
-
-
 func (d *Downloader) importBlockResults(results []*fetchResult) error {
-	log.Info("importBlockResults")
 	// Check for any early termination requests
 	if len(results) == 0 {
 		return nil
@@ -1602,7 +1599,6 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 		}
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
-	log.Info("importBlockResults end")
 	return nil
 }
 
