@@ -84,7 +84,6 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		tx_start := time.Now()
-		// log.Info("tx process")
 		msg, err := TransactionToMessage(tx, types.MakeSigner(p.config, header.Number), header.BaseFee)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
@@ -100,7 +99,6 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		if txProcessTimer.Count()%200000 == 0 {
 			printTxMetric()
 		}
-		// log.Info("tx process end")
 	}
 	// Fail if Shanghai not enabled and len(withdrawals) is non-zero.
 	withdrawals := block.Withdrawals()
@@ -109,21 +107,17 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	}
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles(), withdrawals)
-	// log.Info("Process end")
 	return receipts, allLogs, *usedGas, nil
 }
-
-var pre_txProcessTime float64 = 0
-var pre_txProcessCount int64 = 0
 
 func printTxMetric() {
 	println("Metrics in core/state_processor.go:")
 	println("	core/state_process/tx_process.Mean: ", txProcessTimer.Mean())
 	println("	core/state_process/tx_process.Count: ", txProcessTimer.Count())
-	tmp := (txProcessTimer.Mean()*float64(txProcessTimer.Count()) - pre_txProcessTime*float64(pre_txProcessCount)) / (float64(txProcessTimer.Count()) - float64(pre_txProcessCount))
-	println(" 	core/state_process/tx_process.recent: ", tmp)
-	pre_txProcessCount = txProcessTimer.Count()
-	pre_txProcessTime = txProcessTimer.Mean()
+	println("	core/state_process/tx_process.Percentile(0.5): ", txProcessTimer.Percentile(0.5))
+	println("	core/state_process/tx_process.Percentile(0.75): ", txProcessTimer.Percentile(0.75))
+	println("	core/state_process/tx_process.Percentile(0.95): ", txProcessTimer.Percentile(0.95))
+	println("	core/state_process/tx_process.Percentile(0.99): ", txProcessTimer.Percentile(0.99))
 	rawdb.PrintMetric()
 	pmem_cache.PrintMetric()
 }

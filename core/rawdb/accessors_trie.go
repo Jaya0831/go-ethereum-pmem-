@@ -162,14 +162,6 @@ var (
 	MemcacheDirtyReadMeter  = metrics.NewRegisteredMeter("trie/memcache/dirty/read", nil)
 	MemcacheDirtyWriteMeter = metrics.NewRegisteredMeter("trie/memcache/dirty/write", nil)
 )
-var (
-	pre_getTime         float64 = 0
-	pre_getCount        int64   = 0
-	pre_leveldbGetTime  float64 = 0
-	pre_leveldbGetCount int64   = 0
-	pre_pmemGetTime     float64 = 0
-	pre_pmemGetCount    int64   = 0
-)
 
 func PrintMetric() {
 	fmt.Println("Metrics in core/rawdb/accessors_trie.go:")
@@ -181,16 +173,10 @@ func PrintMetric() {
 	fmt.Println("	core/rawdb/accessors_trie/pmem/read.Rate1: ", pmemReadMeter.Rate1())
 	fmt.Println("	core/rawdb/accessors_trie/pmem/get_time.Mean: ", pmemGetTimer.Mean())
 	fmt.Println("	core/rawdb/accessors_trie/pmem/get_time.Count: ", pmemGetTimer.Count())
-	tmp := (pmemGetTimer.Mean()*float64(pmemGetTimer.Count()) - pre_pmemGetTime*float64(pre_pmemGetCount)) / (float64(pmemGetTimer.Count()) - float64(pre_pmemGetCount))
-	fmt.Println("	core/rawdb/accessors_trie/pmem/get_time.Recent: ", tmp)
 	fmt.Println("	core/rawdb/accessors_trie/levelDB/get_time.Mean: ", levelDBGetTimer.Mean())
 	fmt.Println("	core/rawdb/accessors_trie/levelDB/get_time.Count: ", levelDBGetTimer.Count())
-	tmp = (levelDBGetTimer.Mean()*float64(levelDBGetTimer.Count()) - pre_leveldbGetTime*float64(pre_leveldbGetCount)) / (float64(levelDBGetTimer.Count()) - float64(pre_leveldbGetCount))
-	fmt.Println("	core/rawdb/accessors_trie/levelDB/get_time.Recent: ", tmp)
 	fmt.Println("	core/rawdb/accessors_trie/get_time.Mean: ", getTimer.Mean())
 	fmt.Println("	core/rawdb/accessors_trie/get_time.Count: ", getTimer.Count())
-	tmp = (getTimer.Mean()*float64(getTimer.Count()) - pre_getTime*float64(pre_getCount)) / (float64(getTimer.Count()) - float64(pre_getCount))
-	fmt.Println("	core/rawdb/accessors_trie/get_time.Recent: ", tmp)
 	fmt.Println("	core/rawdb/accessors_trie/get.Count: ", getMeter.Count())
 	fmt.Println("	core/rawdb/accessors_trie/get.Rate1: ", getMeter.Rate1())
 	fmt.Println("Metrics in trie/database.go:")
@@ -210,13 +196,6 @@ func PrintMetric() {
 	fmt.Println("	trie/memcache/dirty/read.Rate1: ", MemcacheDirtyReadMeter.Rate1())
 	fmt.Println("	trie/memcache/dirty/write.Count: ", MemcacheDirtyWriteMeter.Count())
 	fmt.Println("	trie/memcache/dirty/write.Rate1: ", MemcacheDirtyWriteMeter.Rate1())
-
-	pre_getCount = getTimer.Count()
-	pre_getTime = getTimer.Mean()
-	pre_leveldbGetCount = levelDBGetTimer.Count()
-	pre_leveldbGetTime = levelDBGetTimer.Mean()
-	pre_pmemGetCount = pmemGetTimer.Count()
-	pre_pmemGetTime = pmemGetTimer.Mean()
 }
 
 // ReadLegacyTrieNode retrieves the legacy trie node with the given

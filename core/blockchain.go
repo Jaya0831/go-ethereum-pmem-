@@ -1528,14 +1528,14 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 		return 0, errChainStopped
 	}
 	defer bc.chainmu.Unlock()
-	pre_count := insertChainMeter.Count()
+	// pre_count := insertChainMeter.Count()
 	insertChainMeter.Mark(int64(len(chain)))
 	start := time.Now()
 	tmp, err := bc.insertChain(chain, true, true)
 	insertChainTimer.UpdateSince(start)
-	if (pre_count % 50000) > (insertChainMeter.Count() % 50000) {
-		printBlockMetrics()
-	}
+	// if (pre_count % 50000) > (insertChainMeter.Count() % 50000) {
+	// 	printBlockMetrics()
+	// }
 	return tmp, err
 }
 
@@ -1808,6 +1808,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		trieRead += statedb.SnapshotStorageReads + statedb.StorageReads // The time spent on storage read
 		blockExecutionTimer.Update(ptime - trieRead)                    // The time spent on EVM processing
 		blockValidationTimer.Update(vtime - (triehash + trieUpdate))    // The time spent on block validation
+		
 
 		// Write the block to the chain and get the status.
 		var (
