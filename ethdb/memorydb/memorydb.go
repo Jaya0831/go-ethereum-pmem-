@@ -221,6 +221,10 @@ func (db *Database) Pmem_Delete(key []byte) error {
 	return nil
 }
 
+func (db *Database) NewPmemBatch() ethdb.PmemBatch {
+	return nil
+}
+
 // keyvalue is a key-value tuple tagged with a deletion field to allow creating
 // memory-database write batches.
 type keyvalue struct {

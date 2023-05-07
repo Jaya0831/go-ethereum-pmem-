@@ -16,19 +16,19 @@ import (
 	"github.com/ethereum/go-ethereum/metrics"
 )
 
-type PmemError struct {
+type PMemError struct {
 	msg string
 }
 
-func NewPmemError(s string) *PmemError {
-	return &PmemError{msg: s}
+func NewPmemError(s string) *PMemError {
+	return &PMemError{msg: s}
 }
-func (pmemError *PmemError) Error() string {
+func (pmemError *PMemError) Error() string {
 	return pmemError.msg
 }
 
 var (
-	pmemCacheCurrent *PmemCache = nil
+	pmemCacheCurrent *PMemCache = nil
 	currentLock      sync.Mutex
 
 	// metrics
@@ -47,12 +47,12 @@ var (
 	pmemBatchWriteFinishMeter = metrics.NewRegisteredMeter("core/pmem_cache/batch_write_finish", nil)
 )
 
-type PmemCache struct {
+type PMemCache struct {
 	cache         *C.VMEMcache
 	pmemWriteLock *sync.Mutex
 }
 
-func registerPmemCache(pmemCache *PmemCache) error {
+func registerPmemCache(pmemCache *PMemCache) error {
 	currentLock.Lock()
 	defer currentLock.Unlock()
 	if pmemCacheCurrent != nil {
@@ -62,11 +62,11 @@ func registerPmemCache(pmemCache *PmemCache) error {
 	return nil
 }
 
-func GetPmemCache() *PmemCache {
+func GetPmemCache() *PMemCache {
 	return pmemCacheCurrent
 }
 
-func NewPmemcache() *PmemCache {
+func NewPmemcache() *PMemCache {
 	pmemNewMeter.Mark(1)
 	log.Info("PmemCache NewPmemcache()")
 	// FIXME: New和Open
@@ -83,7 +83,7 @@ func NewPmemcache() *PmemCache {
 	if cache == nil {
 		return nil
 	}
-	pmemCache := &PmemCache{
+	pmemCache := &PMemCache{
 		cache:         cache,
 		pmemWriteLock: &sync.Mutex{},
 	}
@@ -95,7 +95,7 @@ func NewPmemcache() *PmemCache {
 }
 
 // always return nil
-func (pmemCache *PmemCache) Close() error {
+func (pmemCache *PMemCache) Close() error {
 	currentLock.Lock()
 	defer currentLock.Unlock()
 	pmemCloseMeter.Mark(1)
@@ -114,7 +114,7 @@ func on_evict(cache *C.VMEMcache, key unsafe.Pointer, k_size C.ulong, args unsaf
 }
 
 // TODO: error is always nil
-func (pmemCache *PmemCache) Get(key []byte) ([]byte, error) {
+func (pmemCache *PMemCache) Get(key []byte) ([]byte, error) {
 	return get(pmemCache.cache, key), nil
 }
 
@@ -131,7 +131,7 @@ func get(cache *C.VMEMcache, key []byte) []byte {
 	return value
 }
 
-func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
+func (pmemCache *PMemCache) Put(key []byte, value []byte) error {
 	// test Update
 	// pmemWriteCountMeter.Mark(1)
 	// if tmp := get(pmemCache.cache, key); tmp != nil {
@@ -159,7 +159,7 @@ func (pmemCache *PmemCache) Put(key []byte, value []byte) error {
 }
 
 // Returns 0 if an entry has been deleted, -1 otherwise.
-func (pmemCache *PmemCache) Delete(key []byte) error {
+func (pmemCache *PMemCache) Delete(key []byte) error {
 	pmemCache.pmemWriteLock.Lock()
 	defer pmemCache.pmemWriteLock.Unlock()
 	pmemDeleteMeter.Mark(1)
@@ -173,7 +173,7 @@ func (pmemCache *PmemCache) Delete(key []byte) error {
 	}
 }
 
-func (pmemCache *PmemCache) Has(key []byte) (bool, error) {
+func (pmemCache *PMemCache) Has(key []byte) (bool, error) {
 	key_c := C.CBytes(key)
 	defer C.free(key_c)
 	tmp := int(C.wrapper_vmemcache_exists(pmemCache.cache, key_c, C.ulong(len(key))))
@@ -186,41 +186,41 @@ func (pmemCache *PmemCache) Has(key []byte) (bool, error) {
 	}
 }
 
-func (pmemCache *PmemCache) NewPmemReplayerWriter() *PmemReplayerWriter {
-	return &PmemReplayerWriter{
+func (pmemCache *PMemCache) NewPmemReplayerWriter() *PMemReplayerWriter {
+	return &PMemReplayerWriter{
 		pmemWriter: pmemCache,
 	}
 }
 
-type PmemReplayerWriter struct {
-	pmemWriter *PmemCache
+type PMemReplayerWriter struct {
+	pmemWriter *PMemCache
 }
 
-func (replayer *PmemReplayerWriter) Put(key, value []byte) error {
+func (replayer *PMemReplayerWriter) Put(key, value []byte) error {
 	return replayer.pmemWriter.Put(key, value)
 }
 
-func (replayer *PmemReplayerWriter) Delete(key []byte) error {
+func (replayer *PMemReplayerWriter) Delete(key []byte) error {
 	return replayer.pmemWriter.Delete(key)
 }
 
 const IdealBatchSize = 100 * 1024
 
-type PmemBatch struct {
+type pmemBatch struct {
 	batch map[string][]byte
-	pmem  *PmemCache
+	pmem  *PMemCache
 	size  int
 }
 
-func (pmemCache *PmemCache) NewPmemBatch() *PmemBatch {
-	return &PmemBatch{
+func (pmemCache *PMemCache) NewPmemBatch() *pmemBatch {
+	return &pmemBatch{
 		batch: make(map[string][]byte),
 		pmem:  pmemCache,
 		size:  0,
 	}
 }
 
-func (b *PmemBatch) Put(key, value []byte) error {
+func (b *pmemBatch) Put(key, value []byte) error {
 	old_key, ok := b.batch[string(key)]
 	if ok {
 		// TODO: 写回和数据库时，要把old_key写回到leveldb
@@ -230,16 +230,16 @@ func (b *PmemBatch) Put(key, value []byte) error {
 	return nil
 }
 
-func (b *PmemBatch) Delete(key []byte) error {
+func (b *pmemBatch) Delete(key []byte) error {
 	log.Error("(b *PmemBatch) Delete is not implemented")
 	return nil
 }
 
-func (b *PmemBatch) ValueSize() int {
+func (b *pmemBatch) ValueSize() int {
 	return b.size
 }
 
-func write(pmemCache *PmemCache, batch_map map[string][]byte) {
+func write(pmemCache *PMemCache, batch_map map[string][]byte) {
 	pmemBatchWriteStartMeter.Mark(1)
 	start := time.Now()
 	for k, v := range batch_map {
@@ -249,12 +249,12 @@ func write(pmemCache *PmemCache, batch_map map[string][]byte) {
 	pmemBatchWriteFinishMeter.Mark(1)
 }
 
-func (b *PmemBatch) Write() error {
+func (b *pmemBatch) Write() error {
 	go write(b.pmem, b.batch)
 	return nil
 }
 
-func (b *PmemBatch) Reset() {
+func (b *pmemBatch) Reset() {
 	b.batch = make(map[string][]byte)
 	b.size = 0
 }
@@ -262,7 +262,11 @@ func (b *PmemBatch) Reset() {
 func PrintMetric() {
 	fmt.Println("Metrics in core/pmem_cache/cache.go:")
 	fmt.Println("	core/pmem_cache/put_error.Count: ", pmemPutErrorMeter.Count())
+	fmt.Println("	core/pmem_cache/put_error.Rate1: ", pmemPutErrorMeter.Rate1())
 	fmt.Println("	core/pmem_cache/on_evict.Count: ", pmemOnEvictMeter.Count())
+	fmt.Println("	core/pmem_cache/on_evict.Rate1: ", pmemOnEvictMeter.Rate1())
 	fmt.Println("	core/pmem_cache/writeKV.Count: ", pmemWriteKVMeter.Count())
+	fmt.Println("	core/pmem_cache/writeKV.Rate1: ", pmemWriteKVMeter.Rate1())
 	fmt.Println("	core/pmem_cache/write_count.Count: ", pmemWriteCountMeter.Count())
+	fmt.Println("	core/pmem_cache/write_count.Rate1: ", pmemWriteCountMeter.Rate1())
 }

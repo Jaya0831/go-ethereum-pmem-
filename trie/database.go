@@ -572,6 +572,8 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	// by only uncaching existing data when the database write finalizes.
 	nodes, storage, start := len(db.dirties), db.dirtiesSize, time.Now()
 	batch := db.diskdb.NewBatch()
+	// pmem batch
+	pmemBatch := db.diskdb.NewPmemBatch()
 
 	// db.dirtiesSize only contains the useful data in the cache, but when reporting
 	// the total memory consumption, the maintenance metadata is also needed to be
@@ -592,9 +594,10 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		// Fetch the oldest referenced node and push into the batch
 		node := db.dirties[oldest]
 		rawdb.WriteLegacyTrieNode(batch, oldest, node.rlp())
-		// // Also write back to pmemcache
-		// db.pmemCache.Put(oldest[:], node.rlp())
-		// memcachePmemWriteMeter.Mark(int64(len(node.rlp())))
+		// pmem batch
+		if pmemBatch != nil {
+			rawdb.WriteLegacyTrieNode(pmemBatch, oldest, node.rlp())
+		}
 
 		// If we exceeded the ideal batch size, commit and reset
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
@@ -603,6 +606,11 @@ func (db *Database) Cap(limit common.StorageSize) error {
 				return err
 			}
 			batch.Reset()
+			// pmem batch
+			if pmemBatch != nil {
+				pmemBatch.Write()
+				pmemBatch.Reset()
+			}
 		}
 		// Iterate to the next flush item, or abort if the size cap was achieved. Size
 		// is the total size, including the useful cached data (hash -> blob), the
@@ -617,6 +625,10 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	if err := batch.Write(); err != nil {
 		log.Error("Failed to write flush list to disk", "err", err)
 		return err
+	}
+	// pmem batch
+	if pmemBatch != nil {
+		pmemBatch.Write()
 	}
 	// Write successful, clear out the flushed data
 	db.lock.Lock()
@@ -662,6 +674,8 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 	// by only uncaching existing data when the database write finalizes.
 	start := time.Now()
 	batch := db.diskdb.NewBatch()
+	//pmem batch
+	pmemBatch := db.diskdb.NewPmemBatch()
 
 	// Move all of the accumulated preimages into a write batch
 	if db.preimages != nil {
@@ -673,7 +687,7 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 	nodes, storage := len(db.dirties), db.dirtiesSize
 
 	uncacher := &cleaner{db}
-	if err := db.commit(node, batch, uncacher); err != nil {
+	if err := db.commit(node, batch, uncacher, pmemBatch); err != nil {
 		log.Error("Failed to commit trie from trie database", "err", err)
 		return err
 	}
@@ -682,6 +696,10 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 		log.Error("Failed to write trie to disk", "err", err)
 		return err
 	}
+	// pmem batch
+	if pmemBatch != nil {
+		pmemBatch.Write()
+	}
 	// Uncache any leftovers in the last batch
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -689,6 +707,10 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 		return err
 	}
 	batch.Reset()
+	// pmem batch
+	if pmemBatch != nil {
+		pmemBatch.Reset()
+	}
 
 	// Reset the storage counters and bumped metrics
 	memcacheCommitTimeTimer.Update(time.Since(start))
@@ -710,7 +732,7 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 }
 
 // commit is the private locked version of Commit.
-func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleaner) error {
+func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleaner, pmemBatch ethdb.PmemBatch) error {
 	// If the node does not exist, it's a previously committed node
 	node, ok := db.dirties[hash]
 	if !ok {
@@ -719,7 +741,7 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 	var err error
 	node.forChilds(func(child common.Hash) {
 		if err == nil {
-			err = db.commit(child, batch, uncacher)
+			err = db.commit(child, batch, uncacher, pmemBatch)
 		}
 	})
 	if err != nil {
@@ -728,13 +750,25 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 	// If we've reached an optimal batch size, commit and start over
 	// enc := node.rlp()
 	rawdb.WriteLegacyTrieNode(batch, hash, node.rlp())
+	// pmem batch
+	if pmemBatch != nil {
+		rawdb.WriteLegacyTrieNode(pmemBatch, hash, node.rlp())
+	}
 	if batch.ValueSize() >= ethdb.IdealBatchSize {
 		if err := batch.Write(); err != nil {
 			return err
 		}
+		// pmem batch
+		if pmemBatch != nil {
+			pmemBatch.Write()
+		}
 		db.lock.Lock()
 		err := batch.Replay(uncacher)
 		batch.Reset()
+		// pmem batch
+		if pmemBatch != nil {
+			pmemBatch.Reset()
+		}
 		db.lock.Unlock()
 		if err != nil {
 			return err

@@ -1541,9 +1541,12 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 
 func printBlockMetrics() {
 	println("Metrics in core/state_processor.go:")
-	println("	core/state_process/insert_chain.Count: ", insertChainTimer.Count())
 	println("	core/state_process/insert_chain.Mean: ", insertChainTimer.Mean())
+	println("	core/state_process/insert_chain.Count: ", insertChainTimer.Count())
 	println("	core/state_process/insert_chain_count.Count: ", insertChainMeter.Count())
+	println("	core/state_process/insert_chain_count.Rate1: ", insertChainMeter.Rate1())
+	tmp := insertChainTimer.Mean() * float64(insertChainTimer.Count()) / float64(insertChainMeter.Count())
+	println("	core/state_process/per_chain: ", tmp)
 }
 
 // insertChain is the internal implementation of InsertChain, which assumes that

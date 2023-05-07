@@ -24,7 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"golang.org/x/crypto/sha3"
@@ -163,28 +162,61 @@ var (
 	MemcacheDirtyReadMeter  = metrics.NewRegisteredMeter("trie/memcache/dirty/read", nil)
 	MemcacheDirtyWriteMeter = metrics.NewRegisteredMeter("trie/memcache/dirty/write", nil)
 )
+var (
+	pre_getTime         float64 = 0
+	pre_getCount        int64   = 0
+	pre_leveldbGetTime  float64 = 0
+	pre_leveldbGetCount int64   = 0
+	pre_pmemGetTime     float64 = 0
+	pre_pmemGetCount    int64   = 0
+)
 
 func PrintMetric() {
 	fmt.Println("Metrics in core/rawdb/accessors_trie.go:")
 	fmt.Println("	core/rawdb/accessors_trie/pmem/hit.Count: ", pmemHitMeter.Count())
+	fmt.Println("	core/rawdb/accessors_trie/pmem/hit.Rate1: ", pmemHitMeter.Rate1())
 	fmt.Println("	core/rawdb/accessors_trie/pmem/miss.Count: ", pmemMissMeter.Count())
+	fmt.Println("	core/rawdb/accessors_trie/pmem/miss.Rate1: ", pmemMissMeter.Rate1())
 	fmt.Println("	core/rawdb/accessors_trie/pmem/read.Count: ", pmemReadMeter.Count())
+	fmt.Println("	core/rawdb/accessors_trie/pmem/read.Rate1: ", pmemReadMeter.Rate1())
 	fmt.Println("	core/rawdb/accessors_trie/pmem/get_time.Mean: ", pmemGetTimer.Mean())
 	fmt.Println("	core/rawdb/accessors_trie/pmem/get_time.Count: ", pmemGetTimer.Count())
+	tmp := (pmemGetTimer.Mean()*float64(pmemGetTimer.Count()) - pre_pmemGetTime*float64(pre_pmemGetCount)) / (float64(pmemGetTimer.Count()) - float64(pre_pmemGetCount))
+	fmt.Println("	core/rawdb/accessors_trie/pmem/get_time.Recent: ", tmp)
 	fmt.Println("	core/rawdb/accessors_trie/levelDB/get_time.Mean: ", levelDBGetTimer.Mean())
 	fmt.Println("	core/rawdb/accessors_trie/levelDB/get_time.Count: ", levelDBGetTimer.Count())
+	tmp = (levelDBGetTimer.Mean()*float64(levelDBGetTimer.Count()) - pre_leveldbGetTime*float64(pre_leveldbGetCount)) / (float64(levelDBGetTimer.Count()) - float64(pre_leveldbGetCount))
+	fmt.Println("	core/rawdb/accessors_trie/levelDB/get_time.Recent: ", tmp)
 	fmt.Println("	core/rawdb/accessors_trie/get_time.Mean: ", getTimer.Mean())
 	fmt.Println("	core/rawdb/accessors_trie/get_time.Count: ", getTimer.Count())
+	tmp = (getTimer.Mean()*float64(getTimer.Count()) - pre_getTime*float64(pre_getCount)) / (float64(getTimer.Count()) - float64(pre_getCount))
+	fmt.Println("	core/rawdb/accessors_trie/get_time.Recent: ", tmp)
 	fmt.Println("	core/rawdb/accessors_trie/get.Count: ", getMeter.Count())
+	fmt.Println("	core/rawdb/accessors_trie/get.Rate1: ", getMeter.Rate1())
 	fmt.Println("Metrics in trie/database.go:")
 	fmt.Println("	trie/memcache/clean/hit.Count: ", MemcacheCleanHitMeter.Count())
+	fmt.Println("	trie/memcache/clean/hit.Rate1: ", MemcacheCleanHitMeter.Rate1())
 	fmt.Println("	trie/memcache/clean/miss.Count: ", MemcacheCleanMissMeter.Count())
+	fmt.Println("	trie/memcache/clean/miss.Rate1: ", MemcacheCleanMissMeter.Rate1())
 	fmt.Println("	trie/memcache/clean/read.Count: ", MemcacheCleanReadMeter.Count())
+	fmt.Println("	trie/memcache/clean/read.Rate1: ", MemcacheCleanReadMeter.Rate1())
 	fmt.Println("	trie/memcache/clean/write.Count: ", MemcacheCleanWriteMeter.Count())
+	fmt.Println("	trie/memcache/clean/write.Rate1: ", MemcacheCleanWriteMeter.Rate1())
 	fmt.Println("	trie/memcache/dirty/hit.Count: ", MemcacheDirtyHitMeter.Count())
+	fmt.Println("	trie/memcache/dirty/hit.Rate1: ", MemcacheDirtyHitMeter.Rate1())
 	fmt.Println("	trie/memcache/dirty/miss.Count: ", MemcacheDirtyMissMeter.Count())
+	fmt.Println("	trie/memcache/dirty/miss.Rate1: ", MemcacheDirtyMissMeter.Rate1())
 	fmt.Println("	trie/memcache/dirty/read.Count: ", MemcacheDirtyReadMeter.Count())
+	fmt.Println("	trie/memcache/dirty/read.Rate1: ", MemcacheDirtyReadMeter.Rate1())
 	fmt.Println("	trie/memcache/dirty/write.Count: ", MemcacheDirtyWriteMeter.Count())
+	fmt.Println("	trie/memcache/dirty/write.Rate1: ", MemcacheDirtyWriteMeter.Rate1())
+
+	pre_getCount = getTimer.Count()
+	pre_getTime = getTimer.Mean()
+	pre_leveldbGetCount = levelDBGetTimer.Count()
+	pre_leveldbGetTime = levelDBGetTimer.Mean()
+	pre_pmemGetCount = pmemGetTimer.Count()
+	pre_pmemGetTime = pmemGetTimer.Mean()
 }
 
 // ReadLegacyTrieNode retrieves the legacy trie node with the given
@@ -231,6 +263,11 @@ func HasLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) bool {
 	return ok
 }
 
+var (
+	levelBatchMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/levelBatch", nil)
+	pmemBatchMeter  = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmemBatch", nil)
+)
+
 // WriteLegacyTrieNode writes the provided legacy trie node to database.
 func WriteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte) {
 	if err := db.Put(hash.Bytes(), node); err != nil {
@@ -239,9 +276,9 @@ func WriteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte)
 	if pmdb, ok := db.(ethdb.Database); ok {
 		pmdb.Pmem_Put(hash.Bytes(), node)
 	}
-	if b, ok2 := db.(*leveldb.LeveldbBatch); ok2 {
-		b.IsTrieData = true
-	}
+	// if b, ok2 := db.(*leveldb.LeveldbBatch); ok2 {
+	// 	b.IsTrieData = true
+	// }
 
 }
 
@@ -254,9 +291,12 @@ func DeleteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 	if pmdb, ok := db.(ethdb.Database); ok {
 		pmdb.Pmem_Delete(hash.Bytes())
-	} else if b, ok2 := db.(*leveldb.LeveldbBatch); ok2 {
-		b.IsTrieData = true
 	}
+	// if pmdb, ok := db.(ethdb.Database); ok {
+	// 	pmdb.Pmem_Delete(hash.Bytes())
+	// } else if b, ok2 := db.(*leveldb.LeveldbBatch); ok2 {
+	// 	b.IsTrieData = true
+	// }
 }
 
 // HasTrieNode checks the trie node presence with the provided node info and

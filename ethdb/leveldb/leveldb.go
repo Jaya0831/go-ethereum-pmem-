@@ -64,7 +64,7 @@ type Database struct {
 	fn string      // filename for reporting
 	db *leveldb.DB // LevelDB instance
 	// pmemCache
-	pmemCache *pmem_cache.PmemCache
+	pmemCache *pmem_cache.PMemCache
 
 	compTimeMeter       metrics.Meter // Meter for measuring the total time spent in database compaction
 	compReadMeter       metrics.Meter // Meter for measuring the data read during compaction
@@ -313,6 +313,10 @@ func (db *Database) Pmem_Delete(key []byte) error {
 	return db.pmemCache.Delete(key)
 }
 
+func (db *Database) NewPmemBatch() ethdb.PmemBatch {
+	return db.pmemCache.NewPmemBatch()
+}
+
 // meter periodically retrieves internal leveldb counters and reports them to
 // the metrics subsystem.
 //
@@ -520,6 +524,7 @@ func (db *Database) meter(refresh time.Duration) {
 // batch is a write-only leveldb batch that commits changes to its host database
 // when Write is called. A batch cannot be used concurrently.
 type LeveldbBatch struct {
+	// TODO: 删掉不需要的字段
 	IsTrieData bool
 	db         *leveldb.DB
 	b          *leveldb.Batch
@@ -548,25 +553,25 @@ func (b *LeveldbBatch) ValueSize() int {
 
 // Write flushes any accumulated data to disk.
 func (b *LeveldbBatch) Write() error {
-	if b.IsTrieData {
-		var leveldb_err, pmem_err error
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			leveldb_err = b.db.Write(b.b, nil)
-		}()
-		go func() {
-			defer wg.Done()
-			pmem_err = b.Replay(b.Diskdb.pmemCache.NewPmemReplayerWriter())
-		}()
-		wg.Wait()
-		if leveldb_err != nil {
-			return leveldb_err
-		} else {
-			return pmem_err
-		}
-	}
+	// if b.IsTrieData {
+	// 	var leveldb_err, pmem_err error
+	// 	var wg sync.WaitGroup
+	// 	wg.Add(2)
+	// 	go func() {
+	// 		defer wg.Done()
+	// 		leveldb_err = b.db.Write(b.b, nil)
+	// 	}()
+	// 	go func() {
+	// 		defer wg.Done()
+	// 		pmem_err = b.Replay(b.Diskdb.pmemCache.NewPmemReplayerWriter())
+	// 	}()
+	// 	wg.Wait()
+	// 	if leveldb_err != nil {
+	// 		return leveldb_err
+	// 	} else {
+	// 		return pmem_err
+	// 	}
+	// }
 	return b.db.Write(b.b, nil)
 }
 

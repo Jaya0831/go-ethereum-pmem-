@@ -97,7 +97,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
 		txProcessTimer.UpdateSince(tx_start)
-		if txProcessTimer.Count() == 1000 || txProcessTimer.Count() == 10000 || txProcessTimer.Count()%50000 == 0 {
+		if txProcessTimer.Count()%200000 == 0 {
 			printTxMetric()
 		}
 		// log.Info("tx process end")
@@ -113,10 +113,17 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	return receipts, allLogs, *usedGas, nil
 }
 
+var pre_txProcessTime float64 = 0
+var pre_txProcessCount int64 = 0
+
 func printTxMetric() {
 	println("Metrics in core/state_processor.go:")
-	println("	core/state_process/tx_process.Count: ", txProcessTimer.Count())
 	println("	core/state_process/tx_process.Mean: ", txProcessTimer.Mean())
+	println("	core/state_process/tx_process.Count: ", txProcessTimer.Count())
+	tmp := (txProcessTimer.Mean()*float64(txProcessTimer.Count()) - pre_txProcessTime*float64(pre_txProcessCount)) / (float64(txProcessTimer.Count()) - float64(pre_txProcessCount))
+	println(" 	core/state_process/tx_process.recent: ", tmp)
+	pre_txProcessCount = txProcessTimer.Count()
+	pre_txProcessTime = txProcessTimer.Mean()
 	rawdb.PrintMetric()
 	pmem_cache.PrintMetric()
 }

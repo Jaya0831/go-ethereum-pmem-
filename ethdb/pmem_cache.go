@@ -14,8 +14,20 @@ type PmemWriter interface {
 	Pmem_Delete(key []byte) error
 }
 
+type PmemBatch interface {
+	KeyValueWriter
+	ValueSize() int
+	Write() error
+	Reset()
+}
+
+type PmemBatcher interface {
+	NewPmemBatch() PmemBatch
+}
+
 type PmemCache interface {
 	PmemReader
 	PmemWriter
 	io.Closer
+	PmemBatcher
 }
