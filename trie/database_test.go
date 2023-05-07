@@ -27,7 +27,7 @@ import (
 // to retrieve the meta root.
 func TestDatabaseMetarootFetch(t *testing.T) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
-	if _, err := db.Node(common.Hash{}); err == nil {
+	if _, err := db.Node(common.Hash{}, nil, common.Hash{}, false); err == nil {
 		t.Fatalf("metaroot retrieval succeeded")
 	}
 }

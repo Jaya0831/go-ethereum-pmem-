@@ -139,6 +139,9 @@ type cachedNode struct {
 
 	flushPrev common.Hash // Previous node in the flush-list
 	flushNext common.Hash // Next node in the flush-list
+
+	owner common.Hash // owner of the node
+	path  string      // path of the node
 }
 
 // cachedNodeSize is the raw size of a cachedNode data structure without any
@@ -308,7 +311,7 @@ func NewDatabaseWithConfig(diskdb ethdb.Database, config *Config) *Database {
 // insert inserts a simplified trie node into the memory database.
 // All nodes inserted by this function will be reference tracked
 // and in theory should only used for **trie nodes** insertion.
-func (db *Database) insert(hash common.Hash, size int, node node) {
+func (db *Database) insert(hash common.Hash, owner common.Hash, path string, size int, node node) {
 	// If the node's already cached, skip
 	if _, ok := db.dirties[hash]; ok {
 		return
@@ -320,6 +323,8 @@ func (db *Database) insert(hash common.Hash, size int, node node) {
 		node:      node,
 		size:      uint16(size),
 		flushPrev: db.newest,
+		owner:     owner,
+		path:      path,
 	}
 	entry.forChilds(func(child common.Hash) {
 		if c := db.dirties[child]; c != nil {
@@ -339,7 +344,7 @@ func (db *Database) insert(hash common.Hash, size int, node node) {
 
 // node retrieves a cached trie node from memory, or returns nil if none can be
 // found in the memory cache.
-func (db *Database) node(hash common.Hash) node {
+func (db *Database) node(owner common.Hash, path []byte, hash common.Hash) node {
 	// fmt.Printf("type of db.diskdb in func node: %T\n", db.diskdb)
 	// Retrieve the node from the clean cache if available
 	if db.cleans != nil {
@@ -364,29 +369,10 @@ func (db *Database) node(hash common.Hash) node {
 	}
 	rawdb.MemcacheDirtyMissMeter.Mark(1)
 
-	// enc_p := db.pmemCache.Get(hash[:])
-	// memcachePmemGetMeter.Mark(1)
-	// Content unavailable in memory, attempt to retrieve from disk
-	// enc, err := db.diskdb.Get(hash[:])
-	// if _, ok := (db.diskdb).(*rawdb.Nofreezedb); ok {
-	// 	memcacheTestPmemMeter.Mark(1)
-	// }
-	enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
-	// if err != nil || enc == nil {
+	enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash, owner, path, true)
 	if enc == nil {
 		return nil
 	}
-	// if enc_p == nil {
-	// 	db.pmemCache.Put(hash[:], enc)
-	// 	memcachePmemMissMeter.Mark(1)
-	// 	memcachePmemWriteMeter.Mark(int64(len(enc)))
-	// } else {
-	// 	memcachePmemReadMeter.Mark(int64(len(enc)))
-	// 	memcachePmemHitMeter.Mark(1)
-	// 	if !bytes.Equal(enc, enc_p) {
-	// 		memcachePmemErrorMeter1.Mark(1)
-	// 	}
-	// }
 	if db.cleans != nil {
 		db.cleans.Set(hash[:], enc)
 		rawdb.MemcacheCleanMissMeter.Mark(1)
@@ -399,7 +385,7 @@ func (db *Database) node(hash common.Hash) node {
 
 // Node retrieves an encoded cached trie node from memory. If it cannot be found
 // cached, the method queries the persistent database for the content.
-func (db *Database) Node(hash common.Hash) ([]byte, error) {
+func (db *Database) Node(owner common.Hash, path []byte, hash common.Hash, isPath bool) ([]byte, error) {
 	// It doesn't make sense to retrieve the metaroot
 	if hash == (common.Hash{}) {
 		return nil, errors.New("not found")
@@ -425,7 +411,7 @@ func (db *Database) Node(hash common.Hash) ([]byte, error) {
 	rawdb.MemcacheDirtyMissMeter.Mark(1)
 
 	// Content unavailable in memory, attempt to retrieve from disk
-	enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash)
+	enc := rawdb.ReadLegacyTrieNode(db.diskdb, hash, owner, path, isPath)
 	if len(enc) != 0 {
 		if db.cleans != nil {
 			db.cleans.Set(hash[:], enc)
@@ -593,10 +579,10 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	for size > limit && oldest != (common.Hash{}) {
 		// Fetch the oldest referenced node and push into the batch
 		node := db.dirties[oldest]
-		rawdb.WriteLegacyTrieNode(batch, oldest, node.rlp())
+		rawdb.WriteLegacyTrieNode(batch, oldest, node.rlp(), common.Hash{}, nil, false)
 		// pmem batch
 		if pmemBatch != nil {
-			rawdb.WriteLegacyTrieNode(pmemBatch, oldest, node.rlp())
+			rawdb.WriteLegacyTrieNode(pmemBatch, oldest, node.rlp(), node.owner, []byte(node.path), true)
 		}
 
 		// If we exceeded the ideal batch size, commit and reset
@@ -749,10 +735,10 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch, uncacher *cleane
 	}
 	// If we've reached an optimal batch size, commit and start over
 	// enc := node.rlp()
-	rawdb.WriteLegacyTrieNode(batch, hash, node.rlp())
+	rawdb.WriteLegacyTrieNode(batch, hash, node.rlp(), common.Hash{}, nil, false)
 	// pmem batch
 	if pmemBatch != nil {
-		rawdb.WriteLegacyTrieNode(pmemBatch, hash, node.rlp())
+		rawdb.WriteLegacyTrieNode(pmemBatch, hash, node.rlp(), node.owner, []byte(node.path), true)
 	}
 	if batch.ValueSize() >= ethdb.IdealBatchSize {
 		if err := batch.Write(); err != nil {
@@ -858,7 +844,7 @@ func (db *Database) Update(nodes *MergedNodeSet) error {
 			if n.isDeleted() {
 				return // ignore deletion
 			}
-			db.insert(n.hash, int(n.size), n.node)
+			db.insert(n.hash, owner, path, int(n.size), n.node)
 		})
 	}
 	// Link up the account trie and storage trie if the node points
@@ -912,14 +898,14 @@ func newHashReader(db *Database) *hashReader {
 
 // Node retrieves the trie node with the given node hash.
 // No error will be returned if the node is not found.
-func (reader *hashReader) Node(_ common.Hash, _ []byte, hash common.Hash) (node, error) {
-	return reader.db.node(hash), nil
+func (reader *hashReader) Node(owner common.Hash, path []byte, hash common.Hash) (node, error) {
+	return reader.db.node(owner, path, hash), nil
 }
 
 // NodeBlob retrieves the RLP-encoded trie node blob with the given node hash.
 // No error will be returned if the node is not found.
-func (reader *hashReader) NodeBlob(_ common.Hash, _ []byte, hash common.Hash) ([]byte, error) {
-	blob, _ := reader.db.Node(hash)
+func (reader *hashReader) NodeBlob(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
+	blob, _ := reader.db.Node(owner, path, hash, true)
 	return blob, nil
 }
 

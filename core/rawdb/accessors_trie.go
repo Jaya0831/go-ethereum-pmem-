@@ -17,6 +17,7 @@
 package rawdb
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 	"time"
@@ -161,6 +162,8 @@ var (
 	MemcacheDirtyMissMeter  = metrics.NewRegisteredMeter("trie/memcache/dirty/miss", nil)
 	MemcacheDirtyReadMeter  = metrics.NewRegisteredMeter("trie/memcache/dirty/read", nil)
 	MemcacheDirtyWriteMeter = metrics.NewRegisteredMeter("trie/memcache/dirty/write", nil)
+
+	pmemHashInconsistentMeter = metrics.NewRegisteredMeter("core/rawdb/accessors_trie/pmem/hash_inconsistent", nil)
 )
 var (
 	pre_getTime         float64 = 0
@@ -221,20 +224,40 @@ func PrintMetric() {
 
 // ReadLegacyTrieNode retrieves the legacy trie node with the given
 // associated node hash.
-func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
+func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash, owner common.Hash, path []byte, isPath bool) []byte {
 	// TODO: what about the ReadlegacyTrieNode call in cmd/geth/snapshot.go
 	getMeter.Mark(1)
 	start := time.Now()
 	pmdb, ok := db.(ethdb.Database)
-	if ok {
-		start_pmem := time.Now()
-		enc_p, _ := pmdb.Pmem_Get(hash[:])
-		pmemGetTimer.UpdateSince(start_pmem)
-		if enc_p != nil {
-			pmemReadMeter.Mark(int64(len(enc_p)))
-			pmemHitMeter.Mark(1)
-			getTimer.UpdateSince(start)
-			return enc_p
+	if ok && isPath {
+		if owner == (common.Hash{}) {
+			start_pmem := time.Now()
+			enc_p, _ := pmdb.Pmem_Get(accountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))))
+			pmemGetTimer.UpdateSince(start_pmem)
+			if enc_p != nil {
+				pmemReadMeter.Mark(int64(len(enc_p)))
+				pmemHitMeter.Mark(1)
+				if !bytes.Equal(enc_p[:common.HashLength], hash[:]) {
+					pmemHashInconsistentMeter.Mark(1)
+				} else {
+					getTimer.UpdateSince(start)
+					return enc_p[common.HashLength:]
+				}
+			}
+		} else {
+			start_pmem := time.Now()
+			enc_p, _ := pmdb.Pmem_Get(storageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))))
+			pmemGetTimer.UpdateSince(start_pmem)
+			if enc_p != nil {
+				pmemReadMeter.Mark(int64(len(enc_p)))
+				pmemHitMeter.Mark(1)
+				if !bytes.Equal(enc_p[:common.HashLength], hash[:]) {
+					pmemHashInconsistentMeter.Mark(1)
+				} else {
+					getTimer.UpdateSince(start)
+					return enc_p[common.HashLength:]
+				}
+			}
 		}
 	}
 	start_leveldb := time.Now()
@@ -245,7 +268,7 @@ func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 		return nil
 	}
 	if ok {
-		pmdb.Pmem_Put(hash[:], data)
+		// pmdb.Pmem_Put(hash[:], data)
 		pmemMissMeter.Mark(1)
 	}
 	getTimer.UpdateSince(start)
@@ -254,11 +277,11 @@ func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 
 // HasLegacyTrieNode checks if the trie node with the provided hash is present in db.
 func HasLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) bool {
-	if pmdb, ok2 := db.(ethdb.Database); ok2 {
-		if has, _ := pmdb.Pmem_Has(hash.Bytes()); has {
-			return has
-		}
-	}
+	// if pmdb, ok2 := db.(ethdb.Database); ok2 {
+	// 	if has, _ := pmdb.Pmem_Has(hash.Bytes()); has {
+	// 		return has
+	// 	}
+	// }
 	ok, _ := db.Has(hash.Bytes())
 	return ok
 }
@@ -269,13 +292,21 @@ var (
 )
 
 // WriteLegacyTrieNode writes the provided legacy trie node to database.
-func WriteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte) {
-	if err := db.Put(hash.Bytes(), node); err != nil {
-		log.Crit("Failed to store legacy trie node", "err", err)
+func WriteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte, owner common.Hash, path []byte, isPath bool) {
+	if isPath {
+		if owner == (common.Hash{}) {
+			db.Put(accountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), node...))
+		} else {
+			db.Put(storageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), node...))
+		}
+	} else {
+		if err := db.Put(hash.Bytes(), node); err != nil {
+			log.Crit("Failed to store legacy trie node", "err", err)
+		}
 	}
-	if pmdb, ok := db.(ethdb.Database); ok {
-		pmdb.Pmem_Put(hash.Bytes(), node)
-	}
+	// if pmdb, ok := db.(ethdb.Database); ok {
+	// 	pmdb.Pmem_Put(hash.Bytes(), node)
+	// }
 	// if b, ok2 := db.(*leveldb.LeveldbBatch); ok2 {
 	// 	b.IsTrieData = true
 	// }
@@ -326,7 +357,7 @@ func HasTrieNode(db ethdb.KeyValueReader, owner common.Hash, path []byte, hash c
 func ReadTrieNode(db ethdb.KeyValueReader, owner common.Hash, path []byte, hash common.Hash, scheme string) []byte {
 	switch scheme {
 	case HashScheme:
-		return ReadLegacyTrieNode(db, hash)
+		return ReadLegacyTrieNode(db, hash, owner, path, true)
 	case PathScheme:
 		var (
 			blob  []byte
@@ -357,7 +388,7 @@ func ReadTrieNode(db ethdb.KeyValueReader, owner common.Hash, path []byte, hash 
 func WriteTrieNode(db ethdb.KeyValueWriter, owner common.Hash, path []byte, hash common.Hash, node []byte, scheme string) {
 	switch scheme {
 	case HashScheme:
-		WriteLegacyTrieNode(db, hash, node)
+		WriteLegacyTrieNode(db, hash, node, owner, path, true)
 	case PathScheme:
 		if owner == (common.Hash{}) {
 			WriteAccountTrieNode(db, path, node)
@@ -390,4 +421,44 @@ func DeleteTrieNode(db ethdb.KeyValueWriter, owner common.Hash, path []byte, has
 	default:
 		panic(fmt.Sprintf("Unknown scheme %v", scheme))
 	}
+}
+
+// trie/encoding
+func hexToCompact(hex []byte) []byte {
+	terminator := byte(0)
+	if hasTerm(hex) {
+		terminator = 1
+		hex = hex[:len(hex)-1]
+	}
+	buf := make([]byte, len(hex)/2+1)
+	buf[0] = terminator << 5 // the flag byte
+	if len(hex)&1 == 1 {
+		buf[0] |= 1 << 4 // odd flag
+		buf[0] |= hex[0] // first nibble is contained in the first byte
+		hex = hex[1:]
+	}
+	decodeNibbles(hex, buf[1:])
+	return buf
+}
+
+func keybytesToHex(str []byte) []byte {
+	l := len(str)*2 + 1
+	var nibbles = make([]byte, l)
+	for i, b := range str {
+		nibbles[i*2] = b / 16
+		nibbles[i*2+1] = b % 16
+	}
+	nibbles[l-1] = 16
+	return nibbles
+}
+
+func decodeNibbles(nibbles []byte, bytes []byte) {
+	for bi, ni := 0, 0; ni < len(nibbles); bi, ni = bi+1, ni+2 {
+		bytes[bi] = nibbles[ni]<<4 | nibbles[ni+1]
+	}
+}
+
+// hasTerm returns whether a hex key has the terminator flag.
+func hasTerm(s []byte) bool {
+	return len(s) > 0 && s[len(s)-1] == 16
 }

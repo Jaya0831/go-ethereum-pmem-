@@ -524,7 +524,7 @@ func testGetNodeData(t *testing.T, protocol uint, drop bool) {
 	// Reconstruct state tree from the received data.
 	reconstructDB := rawdb.NewMemoryDatabase()
 	for i := 0; i < len(data); i++ {
-		rawdb.WriteLegacyTrieNode(reconstructDB, hashes[i], data[i])
+		rawdb.WriteLegacyTrieNode(reconstructDB, hashes[i], data[i], common.Hash{}, nil, false)
 	}
 
 	// Sanity check whether all state matches.
