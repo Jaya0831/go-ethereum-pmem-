@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/core/pmem_cache"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
@@ -87,6 +88,10 @@ var (
 
 	errInsertionInterrupted = errors.New("insertion is interrupted")
 	errChainStopped         = errors.New("blockchain is stopped")
+
+	blockExecutionWithReadTimer      = metrics.NewRegisteredTimer("chain/execution_with_read", nil)
+	blockValidationWithUpdateTimer   = metrics.NewRegisteredTimer("chain/validation_with_update", nil)
+	blockExecutionAndValidationTimer = metrics.NewRegisteredTimer("chain/validation_and_update", nil)
 )
 
 const (
@@ -1528,25 +1533,11 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 		return 0, errChainStopped
 	}
 	defer bc.chainmu.Unlock()
-	// pre_count := insertChainMeter.Count()
 	insertChainMeter.Mark(int64(len(chain)))
 	start := time.Now()
 	tmp, err := bc.insertChain(chain, true, true)
 	insertChainTimer.UpdateSince(start)
-	// if (pre_count % 50000) > (insertChainMeter.Count() % 50000) {
-	// 	printBlockMetrics()
-	// }
 	return tmp, err
-}
-
-func printBlockMetrics() {
-	println("Metrics in core/state_processor.go:")
-	println("	core/state_process/insert_chain.Mean: ", insertChainTimer.Mean())
-	println("	core/state_process/insert_chain.Count: ", insertChainTimer.Count())
-	println("	core/state_process/insert_chain_count.Count: ", insertChainMeter.Count())
-	println("	core/state_process/insert_chain_count.Rate1: ", insertChainMeter.Rate1())
-	tmp := insertChainTimer.Mean() * float64(insertChainTimer.Count()) / float64(insertChainMeter.Count())
-	println("	core/state_process/per_chain: ", tmp)
 }
 
 // insertChain is the internal implementation of InsertChain, which assumes that
@@ -1808,7 +1799,16 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		trieRead += statedb.SnapshotStorageReads + statedb.StorageReads // The time spent on storage read
 		blockExecutionTimer.Update(ptime - trieRead)                    // The time spent on EVM processing
 		blockValidationTimer.Update(vtime - (triehash + trieUpdate))    // The time spent on block validation
-		
+		blockExecutionWithReadTimer.Update(ptime)
+		blockValidationWithUpdateTimer.Update(vtime)
+		blockExecutionAndValidationTimer.Update(ptime + vtime)
+
+		// metrics output
+		if accountReadTimer.Count()%100000 == 0 {
+			printMetrics()
+			rawdb.PrintMetrics()
+			pmem_cache.PrintMetrics()
+		}
 
 		// Write the block to the chain and get the status.
 		var (
@@ -1892,6 +1892,22 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 	}
 	stats.ignored += it.remaining()
 	return it.index, err
+}
+
+func printMetrics() {
+	fmt.Println("Metrics in core/blockchain.go:")
+	fmt.Println("	block.Count: ", accountReadTimer.Count())
+	fmt.Println("	chain/execution_with_read.Mean: ", blockExecutionWithReadTimer.Mean())
+	fmt.Println("	chain/validation_with_update.Mean: ", blockValidationWithUpdateTimer.Mean())
+	fmt.Println("	chain/validation_and_update.Mean: ", blockExecutionAndValidationTimer.Mean())
+	fmt.Println("	chain/account/reads.Mean: ", accountReadTimer.Mean())
+	fmt.Println("	chain/storage/reads.Mean: ", storageReadTimer.Mean())
+	fmt.Println("	chain/snapshot/account/reads.Mean: ", snapshotAccountReadTimer.Mean())
+	fmt.Println("	chain/snapshot/storage/reads.Mean: ", snapshotStorageReadTimer.Mean())
+	fmt.Println("	chain/account/hashes: ", accountHashTimer.Mean())
+	fmt.Println("	chain/storage/hashes: ", storageHashTimer.Mean())
+	fmt.Println("	chain/account/updates: ", accountUpdateTimer.Mean())
+	fmt.Println("	chain/storage/updates: ", storageUpdateTimer.Mean())
 }
 
 // insertSideChain is called when an import batch hits upon a pruned ancestor

@@ -163,7 +163,7 @@ var (
 	MemcacheDirtyWriteMeter = metrics.NewRegisteredMeter("trie/memcache/dirty/write", nil)
 )
 
-func PrintMetric() {
+func PrintMetrics() {
 	fmt.Println("Metrics in core/rawdb/accessors_trie.go:")
 	fmt.Println("	core/rawdb/accessors_trie/pmem/hit.Count: ", pmemHitMeter.Count())
 	fmt.Println("	core/rawdb/accessors_trie/pmem/hit.Rate1: ", pmemHitMeter.Rate1())

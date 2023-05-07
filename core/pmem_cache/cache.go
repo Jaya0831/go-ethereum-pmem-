@@ -259,7 +259,7 @@ func (b *pmemBatch) Reset() {
 	b.size = 0
 }
 
-func PrintMetric() {
+func PrintMetrics() {
 	fmt.Println("Metrics in core/pmem_cache/cache.go:")
 	fmt.Println("	core/pmem_cache/put_error.Count: ", pmemPutErrorMeter.Count())
 	fmt.Println("	core/pmem_cache/put_error.Rate1: ", pmemPutErrorMeter.Rate1())
