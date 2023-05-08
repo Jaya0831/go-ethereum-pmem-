@@ -78,7 +78,7 @@ func NewPmemcache() *PMemCache {
 	path := "/mnt/pmem0/ljy/test"
 	path_c := C.CString(path)
 	defer C.free(unsafe.Pointer(path_c))
-	cache_size := int64(1024 * 1024 * 64 * 1) //1GB
+	cache_size := int64(1024 * 1024 * 128 * 1) //1GB
 	cache := C.wrapper_vmemcache_new(path_c, C.ulong(cache_size), (*C.vmemcache_on_evict)(C.on_evict))
 	if cache == nil {
 		return nil

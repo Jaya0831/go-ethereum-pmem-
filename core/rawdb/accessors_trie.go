@@ -176,6 +176,8 @@ func PrintMetrics() {
 	fmt.Println("	core/rawdb/accessors_trie/levelDB/get_time.Mean: ", levelDBGetTimer.Mean())
 	fmt.Println("	core/rawdb/accessors_trie/levelDB/get_time.Count: ", levelDBGetTimer.Count())
 	fmt.Println("	core/rawdb/accessors_trie/get_time.Mean: ", getTimer.Mean())
+	fmt.Println("	core/rawdb/accessors_trie/get_time.Percentile(0.5): ", getTimer.Percentile(0.5))
+	fmt.Println("	core/rawdb/accessors_trie/get_time.Percentile(0.75): ", getTimer.Percentile(0.75))
 	fmt.Println("	core/rawdb/accessors_trie/get_time.Count: ", getTimer.Count())
 	fmt.Println("	core/rawdb/accessors_trie/get.Count: ", getMeter.Count())
 	fmt.Println("	core/rawdb/accessors_trie/get.Rate1: ", getMeter.Rate1())
