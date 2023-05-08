@@ -546,12 +546,18 @@ func (db *Database) dereference(child common.Hash, parent common.Hash) {
 	}
 }
 
+var (
+	memcacheCapCountMeter    = metrics.NewRegisteredMeter("trie/memcache/cap_count", nil)
+	memcacheCommitCountMeter = metrics.NewRegisteredMeter("trie/memcache/commit_count", nil)
+)
+
 // Cap iteratively flushes old but still referenced trie nodes until the total
 // memory usage goes below the given threshold.
 //
 // Note, this method is a non-synchronized mutator. It is unsafe to call this
 // concurrently with other mutators.
 func (db *Database) Cap(limit common.StorageSize) error {
+	memcacheCapCountMeter.Mark(1)
 	// Create a database batch to flush persistent data out. It is important that
 	// outside code doesn't see an inconsistent state (referenced data removed from
 	// memory cache during commit but not yet in persistent storage). This is ensured
@@ -654,6 +660,7 @@ func (db *Database) Cap(limit common.StorageSize) error {
 // Note, this method is a non-synchronized mutator. It is unsafe to call this
 // concurrently with other mutators.
 func (db *Database) Commit(node common.Hash, report bool) error {
+	memcacheCommitCountMeter.Mark(1)
 	// Create a database batch to flush persistent data out. It is important that
 	// outside code doesn't see an inconsistent state (referenced data removed from
 	// memory cache during commit but not yet in persistent storage). This is ensured

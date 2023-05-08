@@ -36,10 +36,10 @@ var (
 	pmemCloseMeter    = metrics.NewRegisteredMeter("core/pmem_cache/close", nil)
 	pmemPutErrorMeter = metrics.NewRegisteredMeter("core/pmem_cache/put_error", nil)
 	// pmemPutInconsistent = metrics.NewRegisteredMeter("core/pmem_cache/put_inconsistent", nil)
-	pmemOnEvictMeter = metrics.NewRegisteredMeter("core/pmem_cache/on_evict", nil)
-	pmemWriteKVMeter = metrics.NewRegisteredMeter("core/pmem_cache/writeKV", nil)
-	pmemDeleteMeter  = metrics.NewRegisteredMeter("core/pmem_cache/delete", nil)
-	// pmemUpdateMeter     = metrics.NewRegisteredMeter("core/pmem_cache/update", nil)
+	pmemOnEvictMeter    = metrics.NewRegisteredMeter("core/pmem_cache/on_evict", nil)
+	pmemWriteKVMeter    = metrics.NewRegisteredMeter("core/pmem_cache/writeKV", nil)
+	pmemDeleteMeter     = metrics.NewRegisteredMeter("core/pmem_cache/delete", nil)
+	pmemWriteMergeMeter = metrics.NewRegisteredMeter("core/pmem_cache/write_merge", nil)
 	pmemWriteCountMeter = metrics.NewRegisteredMeter("core/pmem_cache/write_count", nil)
 
 	pmemBatchWriteTimer       = metrics.NewRegisteredTimer("core/pmem_cache/batch_write", nil)
@@ -223,6 +223,7 @@ func (pmemCache *PMemCache) NewPmemBatch() *pmemBatch {
 func (b *pmemBatch) Put(key, value []byte) error {
 	old_key, ok := b.batch[string(key)]
 	if ok {
+		pmemWriteMergeMeter.Mark(1)
 		// TODO: 写回和数据库时，要把old_key写回到leveldb
 	}
 	b.batch[string(key)] = value
@@ -259,7 +260,7 @@ func (b *pmemBatch) Reset() {
 	b.size = 0
 }
 
-func PrintMetric() {
+func PrintMetrics() {
 	fmt.Println("Metrics in core/pmem_cache/cache.go:")
 	fmt.Println("	core/pmem_cache/put_error.Count: ", pmemPutErrorMeter.Count())
 	fmt.Println("	core/pmem_cache/put_error.Rate1: ", pmemPutErrorMeter.Rate1())
@@ -269,4 +270,6 @@ func PrintMetric() {
 	fmt.Println("	core/pmem_cache/writeKV.Rate1: ", pmemWriteKVMeter.Rate1())
 	fmt.Println("	core/pmem_cache/write_count.Count: ", pmemWriteCountMeter.Count())
 	fmt.Println("	core/pmem_cache/write_count.Rate1: ", pmemWriteCountMeter.Rate1())
+	fmt.Println("	core/pmem_cache/write_merge.Count: ", pmemWriteMergeMeter.Count())
+	fmt.Println("	core/pmem_cache/write_merge.Rate1: ", pmemWriteMergeMeter.Rate1())
 }

@@ -19,18 +19,14 @@ package core
 import (
 	"fmt"
 	"math/big"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
-	"github.com/ethereum/go-ethereum/core/pmem_cache"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -53,10 +49,6 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 	}
 }
 
-var (
-	txProcessTimer = metrics.NewRegisteredTimer("core/state_process/tx_process", nil)
-)
-
 // Process processes the state changes according to the Ethereum rules by running
 // the transaction messages using the statedb and applying any rewards to both
 // the processor (coinbase) and any included uncles.
@@ -65,7 +57,6 @@ var (
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
 func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (types.Receipts, []*types.Log, uint64, error) {
-	// log.Info("Process")
 	var (
 		receipts    types.Receipts
 		usedGas     = new(uint64)
@@ -83,8 +74,6 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, p.config, cfg)
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
-		tx_start := time.Now()
-		// log.Info("tx process")
 		msg, err := TransactionToMessage(tx, types.MakeSigner(p.config, header.Number), header.BaseFee)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
@@ -96,11 +85,6 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		}
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
-		txProcessTimer.UpdateSince(tx_start)
-		if txProcessTimer.Count()%200000 == 0 {
-			printTxMetric()
-		}
-		// log.Info("tx process end")
 	}
 	// Fail if Shanghai not enabled and len(withdrawals) is non-zero.
 	withdrawals := block.Withdrawals()
@@ -109,23 +93,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	}
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles(), withdrawals)
-	// log.Info("Process end")
 	return receipts, allLogs, *usedGas, nil
-}
-
-var pre_txProcessTime float64 = 0
-var pre_txProcessCount int64 = 0
-
-func printTxMetric() {
-	println("Metrics in core/state_processor.go:")
-	println("	core/state_process/tx_process.Mean: ", txProcessTimer.Mean())
-	println("	core/state_process/tx_process.Count: ", txProcessTimer.Count())
-	tmp := (txProcessTimer.Mean()*float64(txProcessTimer.Count()) - pre_txProcessTime*float64(pre_txProcessCount)) / (float64(txProcessTimer.Count()) - float64(pre_txProcessCount))
-	println(" 	core/state_process/tx_process.recent: ", tmp)
-	pre_txProcessCount = txProcessTimer.Count()
-	pre_txProcessTime = txProcessTimer.Mean()
-	rawdb.PrintMetric()
-	pmem_cache.PrintMetric()
 }
 
 func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (*types.Receipt, error) {
