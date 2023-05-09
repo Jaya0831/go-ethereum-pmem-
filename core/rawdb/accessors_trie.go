@@ -251,7 +251,11 @@ func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash, owner common.
 		return nil
 	}
 	if ok {
-		// pmdb.Pmem_Put(hash[:], data)
+		if owner == (common.Hash{}) {
+			pmdb.Pmem_Put(accountTrieNodeKey(hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), data...))
+		} else {
+			pmdb.Pmem_Put(storageTrieNodeKey(owner, hexToCompact(keybytesToHex([]byte(path)))), append(hash.Bytes(), data...))
+		}
 		pmemMissMeter.Mark(1)
 	}
 	getTimer.UpdateSince(start)
