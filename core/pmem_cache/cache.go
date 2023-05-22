@@ -50,6 +50,8 @@ var (
 type PMemCache struct {
 	cache         *C.VMEMcache
 	pmemWriteLock *sync.Mutex
+	// for cap
+	b *pmemBatch
 }
 
 func registerPmemCache(pmemCache *PMemCache) error {
@@ -87,6 +89,7 @@ func NewPmemcache() *PMemCache {
 		cache:         cache,
 		pmemWriteLock: &sync.Mutex{},
 	}
+	pmemCache.b = pmemCache.NewPmemBatch()
 	err := registerPmemCache(pmemCache)
 	if err != nil {
 		log.Error(err.Error())
@@ -115,6 +118,9 @@ func on_evict(cache *C.VMEMcache, key unsafe.Pointer, k_size C.ulong, args unsaf
 
 // TODO: error is always nil
 func (pmemCache *PMemCache) Get(key []byte) ([]byte, error) {
+	if v, ok := pmemCache.b.batch[string(key)]; ok {
+		return v, nil
+	}
 	return get(pmemCache.cache, key), nil
 }
 
@@ -210,6 +216,12 @@ type pmemBatch struct {
 	batch map[string][]byte
 	pmem  *PMemCache
 	size  int
+	// for cap
+	cap_count int
+}
+
+func (pmemCache *PMemCache) GetPmemBatch() *pmemBatch {
+	return pmemCache.b
 }
 
 func (pmemCache *PMemCache) NewPmemBatch() *pmemBatch {
@@ -258,6 +270,17 @@ func (b *pmemBatch) Write() error {
 func (b *pmemBatch) Reset() {
 	b.batch = make(map[string][]byte)
 	b.size = 0
+	b.cap_count = 0
+}
+
+// for cap
+func (b *pmemBatch) MarkCount() {
+	b.cap_count++
+}
+
+// for cap
+func (b *pmemBatch) GetCount() int {
+	return b.cap_count
 }
 
 func PrintMetrics() {

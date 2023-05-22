@@ -306,6 +306,10 @@ func (db *Database) NewPmemBatch() ethdb.PmemBatch {
 	return nil
 }
 
+func (db *Database) GetPmemBatch() ethdb.PmemBatch {
+	return nil
+}
+
 // snapshot wraps a pebble snapshot for implementing the Snapshot interface.
 type snapshot struct {
 	db *pebble.Snapshot

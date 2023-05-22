@@ -317,6 +317,10 @@ func (db *Database) NewPmemBatch() ethdb.PmemBatch {
 	return db.pmemCache.NewPmemBatch()
 }
 
+func (db *Database) GetPmemBatch() ethdb.PmemBatch {
+	return db.pmemCache.GetPmemBatch()
+}
+
 // meter periodically retrieves internal leveldb counters and reports them to
 // the metrics subsystem.
 //

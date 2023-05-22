@@ -173,3 +173,7 @@ func (db *Database) Pmem_Delete(key []byte) error {
 func (db *Database) NewPmemBatch() ethdb.PmemBatch {
 	return nil
 }
+
+func (db *Database) GetPmemBatch() ethdb.PmemBatch {
+	return nil
+}

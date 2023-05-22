@@ -56,6 +56,10 @@ func (t *table) NewPmemBatch() ethdb.PmemBatch {
 	return nil
 }
 
+func (t *table) GetPmemBatch() ethdb.PmemBatch {
+	return nil
+}
+
 // Close is a noop to implement the Database interface.
 func (t *table) Close() error {
 	return nil

@@ -565,7 +565,7 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	nodes, storage, start := len(db.dirties), db.dirtiesSize, time.Now()
 	batch := db.diskdb.NewBatch()
 	// pmem batch
-	pmemBatch := db.diskdb.NewPmemBatch()
+	pmemBatch := db.diskdb.GetPmemBatch()
 
 	// db.dirtiesSize only contains the useful data in the cache, but when reporting
 	// the total memory consumption, the maintenance metadata is also needed to be
@@ -598,11 +598,6 @@ func (db *Database) Cap(limit common.StorageSize) error {
 				return err
 			}
 			batch.Reset()
-			// pmem batch
-			if pmemBatch != nil {
-				pmemBatch.Write()
-				pmemBatch.Reset()
-			}
 		}
 		// Iterate to the next flush item, or abort if the size cap was achieved. Size
 		// is the total size, including the useful cached data (hash -> blob), the
@@ -618,10 +613,14 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		log.Error("Failed to write flush list to disk", "err", err)
 		return err
 	}
+
 	// pmem batch
-	if pmemBatch != nil {
+	pmemBatch.MarkCount()
+	if pmemBatch.GetCount() == 5 {
 		pmemBatch.Write()
+		pmemBatch.Reset()
 	}
+
 	// Write successful, clear out the flushed data
 	db.lock.Lock()
 	defer db.lock.Unlock()

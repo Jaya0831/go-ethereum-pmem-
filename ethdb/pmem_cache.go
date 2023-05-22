@@ -19,10 +19,14 @@ type PmemBatch interface {
 	ValueSize() int
 	Write() error
 	Reset()
+	// for cap
+	MarkCount()
+	GetCount() int
 }
 
 type PmemBatcher interface {
 	NewPmemBatch() PmemBatch
+	GetPmemBatch() PmemBatch
 }
 
 type PmemCache interface {
