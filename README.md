@@ -1,3 +1,12 @@
+## Optimization of Blockchain Storage System Based on NVM 
+Insufficient throughput has long been a significant obstacle to the widespread adoption of blockchain technology. Previous research has primarily focused on upper-layer consensus mechanisms and architectures, while neglecting the bottleneck in storage layers. By reducing the time overhead of blockchain data I/O operations, the efficiency of transaction execution can be improved, and the throughput of the blockchain system can be increased. Non-volatile Memory (NVM) is an emerging storage medium that offers lower I/O latency and supports byte addressing compared to traditional hard drives. However, existing blockchain frameworks, such as Ethereum, do not effectively leverage the I/O capabilities of NVM.
+
+To better utilize the characteristics of NVM and reduce the time overhead of data reading during transaction execution in Ethereum, an NVM storage layer is introduced to cache state data in the original Ethereum storage architecture. By analyzing the Ethereum data structure and I/O requirements, the hash storage strategy of NVM cache is optimized to a prefix storage strategy, reducing the waste of cache space caused by outdated data and improving the efficiency of the NVM cache. Additionally, the prefix storage strategy-based NVM caching utilizes write merging to reduce the number of writes to NVM, thereby prolonging NVM's lifespan.
+
+This design is implemented in the go-ethereum open-source project, and performance testing is conducted. Experimental testing shows that when the Ethereum state data size is 26GB, a 64MB hash strategy NVM caching can reduce the node's read overhead to 59.7% of the original, while a prefix strategy NVM caching can further reduce the overhead to 41.5% of the original.
+
+
+
 ## Go Ethereum
 
 Official Golang execution layer implementation of the Ethereum protocol.
